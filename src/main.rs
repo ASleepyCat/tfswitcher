@@ -1,29 +1,35 @@
+mod ffi;
+
 use dialoguer::{theme::ColorfulTheme, Select};
 use regex::Regex;
 use reqwest::blocking::{get, Response};
+use semver::{VersionReq, Version};
 use std::{
     env::{self, consts},
     error::Error,
-    fmt,
     fs::File,
-    io::{copy, Cursor, BufReader},
+    io::{copy, Cursor},
     os::unix::prelude::PermissionsExt,
-    path::PathBuf,
+    path::PathBuf, str::FromStr,
 };
 use zip::ZipArchive;
 
 const PROGRAM_NAME: &str = "terraform";
 const ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
 
-#[derive(Clone, Debug)]
-struct PathError;
+fn find_program_path(program_name: &str) -> Option<PathBuf> {
+    if let Ok(path_var) = env::var("PATH") {
+        let separator = if cfg!(windows) { ';' } else { ':' };
 
-impl Error for PathError {}
-
-impl fmt::Display for PathError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "unable to find terraform directory")
+        for path in path_var.split(separator) {
+            let program_path = PathBuf::from(path).join(program_name);
+            if program_path.exists() {
+                return Some(program_path);
+            }
+        }
     }
+
+    None
 }
 
 fn get_http(url: &str) -> Result<Response, Box<dyn Error>> {
@@ -35,37 +41,66 @@ fn get_http(url: &str) -> Result<Response, Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let program_path = find_program_path(PROGRAM_NAME)?;
+    let Some(program_path) = find_terraform_program_path() else {
+        panic!("could not find path to install terraform");
+    };
 
-    let versions = get_terraform_versions(ARCHIVE_URL)?;
+    let version = get_version_to_install()?;
 
-    let version = prompt_version_to_user(&versions)?;
-
-    install_version(program_path, version)?;
+    install_version(program_path, &version)?;
 
     Ok(())
 }
 
-fn find_program_path(program_name: &str) -> Result<PathBuf, PathError> {
-    if let Ok(path_var) = env::var("PATH") {
-        let separator = if cfg!(windows) { ';' } else { ':' };
-
-        for path in path_var.split(separator) {
-            let program_path = PathBuf::from(path).join(program_name);
-            if program_path.exists() {
-                return Ok(program_path);
-            }
-        }
+fn find_terraform_program_path() -> Option<PathBuf> {
+    if let Some(path) = find_program_path(PROGRAM_NAME) {
+        return Some(path);
     }
 
     match home::home_dir() {
         Some(mut path) => {
-            path.push(format!(".local/bin/{program_name}"));
-            println!("could not locate {program_name}, installing to {path:?}\nmake sure to include the directory into your $PATH");
-            Ok(path)
+            path.push(format!(".local/bin/{PROGRAM_NAME}"));
+            println!("could not locate {PROGRAM_NAME}, installing to {path:?}\nmake sure to include the directory into your $PATH");
+            Some(path)
         }
-        None => Err(PathError),
+        None => None,
     }
+}
+
+fn get_version_to_install() -> Result<String, Box<dyn Error>> {
+    let versions = get_terraform_versions(ARCHIVE_URL)?;
+    
+    if let Some(version_from_module) = get_version_from_module(&versions)? {
+        return Ok(version_from_module);
+    }
+
+    get_version_from_user_prompt(versions)
+}
+
+fn get_version_from_module(versions: &Vec<String>) -> Result<Option<String>, Box<dyn Error>> {
+    let version_constraint = match ffi::get_version_from_module() {
+        Some(constraint) => constraint,
+        None => return Ok(None)
+    };
+
+    println!("module constraint is {}", version_constraint);
+
+    // TODO: Pessimistic version constraints
+    let req = VersionReq::parse(&version_constraint)?;
+    for version in versions {
+        let v = Version::from_str(&version)?;
+        if req.matches(&v) {
+            return Ok(Some(version.to_owned()));
+        }
+    }
+
+    Ok(None)
+}
+
+fn get_version_from_user_prompt(versions: Vec<String>) -> Result<String, Box<dyn Error>> {
+    let version = prompt_version_to_user(&versions)?;
+
+    Ok(version.to_owned())
 }
 
 fn get_terraform_versions(url: &str) -> Result<Vec<String>, Box<dyn Error>> {
