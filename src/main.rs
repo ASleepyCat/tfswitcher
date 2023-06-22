@@ -47,8 +47,8 @@ fn find_program_path(program_name: &str) -> Option<PathBuf> {
 fn get_http(url: &str) -> Result<Response, Box<dyn Error>> {
     let response = get(url)?;
     match response.error_for_status_ref() {
-        Ok(_) => return Ok(response),
-        Err(e) => return Err(Box::new(e)),
+        Ok(_) => Ok(response),
+        Err(e) => Err(Box::new(e)),
     }
 }
 
@@ -104,9 +104,9 @@ fn get_terraform_versions(args: Args, url: &str) -> Result<Vec<String>, Box<dyn 
 
     // From https://github.com/warrensbox/terraform-switcher/blob/d7dfd1b44605b095937e94b981d24305b858ff8c/lib/list_versions.go#L28-L35
     let re = if args.list_all {
-        Regex::new(r#"\/(\d+\.\d+\.\d+)(-[a-zA-z]+\d*)?/?""#).expect("Invalid regex")
+        Regex::new(r#"/(\d+\.\d+\.\d+)(-[a-zA-z]+\d*)?/?""#).expect("Invalid regex")
     } else {
-        Regex::new(r#"\/(\d+\.\d+\.\d+)\/?""#).expect("Invalid regex")
+        Regex::new(r#"/(\d+\.\d+\.\d+)/?""#).expect("Invalid regex")
     };
     let trim_matches: &[_] = &['/', '"'];
     for text in lines {
@@ -126,11 +126,11 @@ fn get_version_from_module(versions: &Vec<String>) -> Result<Option<String>, Box
         None => return Ok(None),
     };
 
-    println!("module constraint is {}", version_constraint);
+    println!("module constraint is {version_constraint}");
 
     let req = VersionReq::parse(&version_constraint)?;
     for version in versions {
-        let v = Version::from_str(&version)?;
+        let v = Version::from_str(version)?;
         if req.matches(&v) {
             return Ok(Some(version.to_owned()));
         }
@@ -139,16 +139,16 @@ fn get_version_from_module(versions: &Vec<String>) -> Result<Option<String>, Box
     Ok(None)
 }
 
-fn get_version_from_user_prompt(versions: &Vec<String>) -> Result<String, Box<dyn Error>> {
-    let version = prompt_version_to_user(&versions)?;
+fn get_version_from_user_prompt(versions: &[String]) -> Result<String, Box<dyn Error>> {
+    let version = prompt_version_to_user(versions)?;
 
     Ok(version.to_owned())
 }
 
-fn prompt_version_to_user(versions: &Vec<String>) -> Result<&String, Box<dyn Error>> {
+fn prompt_version_to_user(versions: &[String]) -> Result<&String, Box<dyn Error>> {
     println!("select a terraform version to install");
     let selection = Select::with_theme(&ColorfulTheme::default())
-        .items(&versions)
+        .items(versions)
         .default(0)
         .interact()?;
 
