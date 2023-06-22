@@ -25,7 +25,7 @@ struct Args {
     #[arg(short, long = "list-all", default_value_t = false)]
     list_all: bool,
 
-    #[arg(short, long)]
+    #[arg(short, long, env = "TF_VERSION")]
     version: Option<String>,
 }
 
