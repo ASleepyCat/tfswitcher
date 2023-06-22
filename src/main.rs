@@ -1,21 +1,33 @@
 mod ffi;
 
+use clap::Parser;
 use dialoguer::{theme::ColorfulTheme, Select};
 use regex::Regex;
 use reqwest::blocking::{get, Response};
-use semver::{VersionReq, Version};
+use semver::{Version, VersionReq};
 use std::{
     env::{self, consts},
     error::Error,
     fs::File,
     io::{copy, Cursor},
     os::unix::prelude::PermissionsExt,
-    path::PathBuf, str::FromStr,
+    path::PathBuf,
+    str::FromStr,
 };
 use zip::ZipArchive;
 
 const PROGRAM_NAME: &str = "terraform";
 const ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
+
+#[derive(Parser, Debug)]
+struct Args {
+    /// Include pre-release versions
+    #[arg(short, long = "list-all", default_value_t = false)]
+    list_all: bool,
+
+    #[arg(short, long)]
+    version: Option<String>,
+}
 
 fn find_program_path(program_name: &str) -> Option<PathBuf> {
     if let Ok(path_var) = env::var("PATH") {
@@ -41,11 +53,13 @@ fn get_http(url: &str) -> Result<Response, Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let args = Args::parse();
+
     let Some(program_path) = find_terraform_program_path() else {
         panic!("could not find path to install terraform");
     };
 
-    let version = get_version_to_install()?;
+    let version = get_version_to_install(args)?;
 
     install_version(program_path, &version)?;
 
@@ -67,39 +81,33 @@ fn find_terraform_program_path() -> Option<PathBuf> {
     }
 }
 
-fn get_version_to_install() -> Result<String, Box<dyn Error>> {
-    if let Some(version) = get_version_from_args() {
+fn get_version_to_install(args: Args) -> Result<String, Box<dyn Error>> {
+    if let Some(version) = args.version {
         return Ok(version);
     }
 
-    let versions = get_terraform_versions(ARCHIVE_URL)?;
-    
+    let versions = get_terraform_versions(args, ARCHIVE_URL)?;
+
     if let Some(version_from_module) = get_version_from_module(&versions)? {
         return Ok(version_from_module);
     }
 
-    get_version_from_user_prompt(versions)
+    get_version_from_user_prompt(&versions)
 }
 
-fn get_version_from_args() -> Option<String> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        return None;
-    }
-
-    let version = &args[1];
-    Some(version.to_string())
-}
-
-fn get_terraform_versions(url: &str) -> Result<Vec<String>, Box<dyn Error>> {
+fn get_terraform_versions(args: Args, url: &str) -> Result<Vec<String>, Box<dyn Error>> {
     let mut versions = vec![];
 
     let response = get_http(url)?;
     let contents = response.text()?;
     let lines: Vec<_> = contents.split('\n').collect();
 
-    // From https://github.com/warrensbox/terraform-switcher/blob/d7dfd1b44605b095937e94b981d24305b858ff8c/lib/list_versions.go#L54
-    let re = Regex::new(r#"\/(\d+\.\d+\.\d+)\/?""#)?;
+    // From https://github.com/warrensbox/terraform-switcher/blob/d7dfd1b44605b095937e94b981d24305b858ff8c/lib/list_versions.go#L28-L35
+    let re = if args.list_all {
+        Regex::new(r#"\/(\d+\.\d+\.\d+)(-[a-zA-z]+\d*)?/?""#).expect("Invalid regex")
+    } else {
+        Regex::new(r#"\/(\d+\.\d+\.\d+)\/?""#).expect("Invalid regex")
+    };
     let trim_matches: &[_] = &['/', '"'];
     for text in lines {
         if let Some(capture) = re.captures(text) {
@@ -115,7 +123,7 @@ fn get_terraform_versions(url: &str) -> Result<Vec<String>, Box<dyn Error>> {
 fn get_version_from_module(versions: &Vec<String>) -> Result<Option<String>, Box<dyn Error>> {
     let version_constraint = match ffi::get_version_from_module() {
         Some(constraint) => constraint,
-        None => return Ok(None)
+        None => return Ok(None),
     };
 
     println!("module constraint is {}", version_constraint);
@@ -131,7 +139,7 @@ fn get_version_from_module(versions: &Vec<String>) -> Result<Option<String>, Box
     Ok(None)
 }
 
-fn get_version_from_user_prompt(versions: Vec<String>) -> Result<String, Box<dyn Error>> {
+fn get_version_from_user_prompt(versions: &Vec<String>) -> Result<String, Box<dyn Error>> {
     let version = prompt_version_to_user(&versions)?;
 
     Ok(version.to_owned())

@@ -13,6 +13,9 @@ func GetVersionFromModule() *C.char {
 		return nil
 	}
 
+	if len(module.RequiredCore) == 0 {
+		return nil
+	}
 	versionConstraint := module.RequiredCore[0]
 	return C.CString(versionConstraint)
 }
