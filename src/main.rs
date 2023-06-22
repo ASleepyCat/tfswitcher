@@ -85,7 +85,6 @@ fn get_version_from_module(versions: &Vec<String>) -> Result<Option<String>, Box
 
     println!("module constraint is {}", version_constraint);
 
-    // TODO: Pessimistic version constraints
     let req = VersionReq::parse(&version_constraint)?;
     for version in versions {
         let v = Version::from_str(&version)?;
