@@ -68,6 +68,10 @@ fn find_terraform_program_path() -> Option<PathBuf> {
 }
 
 fn get_version_to_install() -> Result<String, Box<dyn Error>> {
+    if let Some(version) = get_version_from_args() {
+        return Ok(version);
+    }
+
     let versions = get_terraform_versions(ARCHIVE_URL)?;
     
     if let Some(version_from_module) = get_version_from_module(&versions)? {
@@ -75,6 +79,37 @@ fn get_version_to_install() -> Result<String, Box<dyn Error>> {
     }
 
     get_version_from_user_prompt(versions)
+}
+
+fn get_version_from_args() -> Option<String> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        return None;
+    }
+
+    let version = &args[1];
+    Some(version.to_string())
+}
+
+fn get_terraform_versions(url: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut versions = vec![];
+
+    let response = get_http(url)?;
+    let contents = response.text()?;
+    let lines: Vec<_> = contents.split('\n').collect();
+
+    // From https://github.com/warrensbox/terraform-switcher/blob/d7dfd1b44605b095937e94b981d24305b858ff8c/lib/list_versions.go#L54
+    let re = Regex::new(r#"\/(\d+\.\d+\.\d+)\/?""#)?;
+    let trim_matches: &[_] = &['/', '"'];
+    for text in lines {
+        if let Some(capture) = re.captures(text) {
+            if let Some(mat) = capture.get(0) {
+                versions.push(mat.as_str().trim_matches(trim_matches).to_string());
+            }
+        }
+    }
+
+    Ok(versions)
 }
 
 fn get_version_from_module(versions: &Vec<String>) -> Result<Option<String>, Box<dyn Error>> {
@@ -100,27 +135,6 @@ fn get_version_from_user_prompt(versions: Vec<String>) -> Result<String, Box<dyn
     let version = prompt_version_to_user(&versions)?;
 
     Ok(version.to_owned())
-}
-
-fn get_terraform_versions(url: &str) -> Result<Vec<String>, Box<dyn Error>> {
-    let mut versions = vec![];
-
-    let response = get_http(url)?;
-    let contents = response.text()?;
-    let lines: Vec<_> = contents.split('\n').collect();
-
-    // From https://github.com/warrensbox/terraform-switcher/blob/d7dfd1b44605b095937e94b981d24305b858ff8c/lib/list_versions.go#L54
-    let re = Regex::new(r#"\/(\d+\.\d+\.\d+)\/?""#)?;
-    let trim_matches: &[_] = &['/', '"'];
-    for text in lines {
-        if let Some(capture) = re.captures(text) {
-            if let Some(mat) = capture.get(0) {
-                versions.push(mat.as_str().trim_matches(trim_matches).to_string());
-            }
-        }
-    }
-
-    Ok(versions)
 }
 
 fn prompt_version_to_user(versions: &Vec<String>) -> Result<&String, Box<dyn Error>> {
