@@ -8,16 +8,17 @@ use semver::{Version, VersionReq};
 use std::{
     env::{self, consts},
     error::Error,
-    fs::File,
-    io::{copy, Cursor},
+    fs::{File, self},
+    io::{copy, Cursor, Read, Seek},
     os::unix::prelude::PermissionsExt,
     path::PathBuf,
     str::FromStr,
 };
 use zip::ZipArchive;
 
-const PROGRAM_NAME: &str = "terraform";
 const ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
+const DEFAULT_LOCATION: &str = ".local/bin";
+const PROGRAM_NAME: &str = "terraform";
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -28,6 +29,8 @@ struct Args {
     #[arg(short = 'i', long = "install", env = "TF_VERSION")]
     version: Option<String>,
 }
+
+trait R: Read + Seek {}
 
 fn find_program_path(program_name: &str) -> Option<PathBuf> {
     if let Ok(path_var) = env::var("PATH") {
@@ -73,7 +76,7 @@ fn find_terraform_program_path() -> Option<PathBuf> {
 
     match home::home_dir() {
         Some(mut path) => {
-            path.push(format!(".local/bin/{PROGRAM_NAME}"));
+            path.push(format!("{DEFAULT_LOCATION}/{PROGRAM_NAME}"));
             println!("could not locate {PROGRAM_NAME}, installing to {path:?}\nmake sure to include the directory into your $PATH");
             Some(path)
         }
@@ -165,25 +168,51 @@ fn install_version(program_path: PathBuf, version: &str) -> Result<(), Box<dyn E
         _ => consts::ARCH,
     };
 
-    let url = format!("{ARCHIVE_URL}/{version}/terraform_{version}_{os}_{arch}.zip");
+    let archive = get_terraform_version_zip(version, os, arch)?;
+    extract_zip_archive(&program_path, archive)
+}
+
+fn get_terraform_version_zip(version: &str, os: &str, arch: &str) -> Result<ZipArchive<Cursor<Vec<u8>>>, Box<dyn Error>> {
+    let zip_name = format!("terraform_{version}_{os}_{arch}.zip");
+
+    if let Some(path) = home::home_dir().as_mut() {
+        path.push(format!("{DEFAULT_LOCATION}/{zip_name}"));
+
+        if path.exists() {
+            println!("using cached archive at {path:?}");
+            let buffer = fs::read(path)?;
+            let cursor = Cursor::new(buffer);
+            let archive = ZipArchive::new(cursor)?;
+            return Ok(archive);
+        }
+    }
+
+    download_and_save_terraform_version_zip(version, &zip_name)
+}
+
+fn download_and_save_terraform_version_zip(version: &str, zip_name: &str) -> Result<ZipArchive<Cursor<Vec<u8>>>, Box<dyn Error>> {
+    let url = format!("{ARCHIVE_URL}/{version}/{zip_name}");
     println!("downloading archive from {url}");
 
     let response = get_http(&url)?;
-    extract_zip_archive_from_http_response(&program_path, response)?;
+    let buffer = response.bytes()?.to_vec();
 
-    Ok(())
-}
-
-fn extract_zip_archive_from_http_response(
-    program_path: &PathBuf,
-    mut response: Response,
-) -> Result<(), Box<dyn Error>> {
-    let mut buffer = Vec::new();
-    copy(&mut response, &mut buffer)?;
+    match home::home_dir() {
+        Some(mut path) => {
+            path.push(format!("{DEFAULT_LOCATION}/{zip_name}"));
+            fs::write(path, &buffer)?;
+        }
+        None => println!("unable to cache archive")
+    }
 
     let cursor = Cursor::new(buffer);
-    let mut archive = ZipArchive::new(cursor)?;
+    Ok(ZipArchive::new(cursor)?)
+}
 
+fn extract_zip_archive(
+    program_path: &PathBuf,
+    mut archive: ZipArchive<Cursor<Vec<u8>>>,
+) -> Result<(), Box<dyn Error>> {
     let mut file = archive.by_index(0)?;
     let file_name = file.name();
     println!("extracting {file_name} to {program_path:?}");
