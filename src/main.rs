@@ -21,13 +21,14 @@ const DEFAULT_LOCATION: &str = ".local/bin";
 const PROGRAM_NAME: &str = "terraform";
 
 #[derive(Parser, Debug)]
+#[command(version)]
 struct Args {
     /// Include pre-release versions
     #[arg(short, long = "list-all", default_value_t = false)]
     list_all: bool,
 
-    #[arg(short = 'i', long = "install", env = "TF_VERSION")]
-    version: Option<String>,
+    #[arg(long = "install", env = "TF_VERSION")]
+    install_version: Option<String>,
 }
 
 fn find_program_path(program_name: &str) -> Option<PathBuf> {
@@ -85,7 +86,7 @@ fn find_terraform_program_path() -> Option<PathBuf> {
 }
 
 fn get_version_to_install(args: Args) -> Result<Option<String>, Box<dyn Error>> {
-    if let Some(version) = args.version {
+    if let Some(version) = args.install_version {
         return Ok(Some(version));
     }
 
@@ -322,7 +323,7 @@ mod tests {
         let expected_versions = vec!["1.3.0", "1.2.0", "1.1.0", "1.0.0", "0.15.0"];
         let args = Args {
             list_all: false,
-            version: None,
+            install_version: None,
         };
         let actual_versions = capture_terraform_versions(args, LINES);
 
@@ -355,7 +356,7 @@ mod tests {
         ];
         let args = Args {
             list_all: true,
-            version: None,
+            install_version: None,
         };
         let actual_versions = capture_terraform_versions(args, LINES);
 
