@@ -9,7 +9,7 @@ use std::{
     env::{self, consts},
     error::Error,
     fs::{File, self},
-    io::{copy, Cursor, Read, Seek},
+    io::{copy, Cursor},
     os::unix::prelude::PermissionsExt,
     path::PathBuf,
     str::FromStr,
@@ -29,8 +29,6 @@ struct Args {
     #[arg(short = 'i', long = "install", env = "TF_VERSION")]
     version: Option<String>,
 }
-
-trait R: Read + Seek {}
 
 fn find_program_path(program_name: &str) -> Option<PathBuf> {
     if let Ok(path_var) = env::var("PATH") {
