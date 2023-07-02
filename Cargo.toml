@@ -2,6 +2,13 @@
 name = "tfswitcher"
 version = "0.1.0"
 edition = "2021"
+authors = ["ASleepyCat dyeom340@gmail.com"]
+license = "MIT"
+description = "Terraform version switcher written (mostly) in Rust"
+readme = "README.md"
+repository = "https://github.com/ASleepyCat/tfswitcher"
+keywords = ["cli", "terraform", "tfswitcher", "tfswitch"]
+categories = ["command-line-utilities"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
