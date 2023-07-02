@@ -12,6 +12,6 @@ This is not a pure Rust implementation, as it relies on [HashiCorp's `terraform-
 
 This is also not a complete reimplementation of `tfswitch`, as there are some missing flags that haven't been implemented. If you rely on these missing flags, raise an issue and I'll add it in.
 
-This is also my first non-trivial Rust project; if there is a mistake I've made that doesn't conform to standard Rust coding practises, please raise an issue about it.
+This is also my first non-trivial Rust project; if there is a mistake I've made that doesn't conform to standard Rust coding practices, please raise an issue about it.
 
 This has not been tested on Windows or macOS, so YMMV.
