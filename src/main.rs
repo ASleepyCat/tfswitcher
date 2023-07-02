@@ -77,7 +77,7 @@ fn find_terraform_program_path() -> Option<PathBuf> {
     match home::home_dir() {
         Some(mut path) => {
             path.push(format!("{DEFAULT_LOCATION}/{PROGRAM_NAME}"));
-            println!("could not locate {PROGRAM_NAME}, installing to {path:?}\nmake sure to include the directory into your $PATH");
+            println!("Could not locate {PROGRAM_NAME}, installing to {path:?}\nmake sure to include the directory into your $PATH");
             Some(path)
         }
         None => None,
@@ -135,7 +135,7 @@ fn get_version_from_module(versions: &[String]) -> Result<Option<String>, Box<dy
         None => return Ok(None),
     };
 
-    println!("module constraint is {version_constraint}");
+    println!("Module constraint is {version_constraint}");
 
     let req = VersionReq::parse(&version_constraint)?;
     for version in versions {
@@ -149,7 +149,7 @@ fn get_version_from_module(versions: &[String]) -> Result<Option<String>, Box<dy
 }
 
 fn get_version_from_user_prompt(versions: &[String]) -> Result<Option<String>, Box<dyn Error>> {
-    println!("select a terraform version to install");
+    println!("Select a terraform version to install");
     match Select::with_theme(&ColorfulTheme::default())
         .items(versions)
         .default(0)
@@ -160,7 +160,7 @@ fn get_version_from_user_prompt(versions: &[String]) -> Result<Option<String>, B
 }
 
 fn install_version(program_path: PathBuf, version: &str) -> Result<(), Box<dyn Error>> {
-    println!("{PROGRAM_NAME} {version} will be installed to {program_path:?}");
+    println!("Terraform {version} will be installed to {program_path:?}");
 
     let os = consts::OS;
     let arch = get_arch(consts::ARCH);
@@ -189,7 +189,7 @@ fn get_terraform_version_zip(
         path.push(format!("{DEFAULT_LOCATION}/{zip_name}"));
 
         if path.exists() {
-            println!("using cached archive at {path:?}");
+            println!("Using cached archive at {path:?}");
             let buffer = fs::read(path)?;
             let cursor = Cursor::new(buffer);
             let archive = ZipArchive::new(cursor)?;
@@ -205,7 +205,7 @@ fn download_and_save_terraform_version_zip(
     zip_name: &str,
 ) -> Result<ZipArchive<Cursor<Vec<u8>>>, Box<dyn Error>> {
     let url = format!("{ARCHIVE_URL}/{version}/{zip_name}");
-    println!("downloading archive from {url}");
+    println!("Downloading archive from {url}");
 
     let response = get_http(&url)?;
     let buffer = response.bytes()?.to_vec();
@@ -215,7 +215,7 @@ fn download_and_save_terraform_version_zip(
             path.push(format!("{DEFAULT_LOCATION}/{zip_name}"));
             fs::write(path, &buffer)?;
         }
-        None => println!("unable to cache archive"),
+        None => println!("Unable to cache archive"),
     }
 
     let cursor = Cursor::new(buffer);
@@ -228,7 +228,7 @@ fn extract_zip_archive(
 ) -> Result<(), Box<dyn Error>> {
     let mut file = archive.by_index(0)?;
     let file_name = file.name();
-    println!("extracting {file_name} to {program_path:?}");
+    println!("Extracting {file_name} to {program_path:?}");
 
     // Create a new file for the extracted file and set rwxr-xr-x
     let mut outfile = File::create(program_path)?;
@@ -239,7 +239,7 @@ fn extract_zip_archive(
     // Write the contents of the file to the output file
     io::copy(&mut file, &mut outfile)?;
 
-    println!("extracted archive to {program_path:?}");
+    println!("Extracted archive to {program_path:?}");
     Ok(())
 }
 
