@@ -163,14 +163,19 @@ fn install_version(program_path: PathBuf, version: &str) -> Result<(), Box<dyn E
     println!("{PROGRAM_NAME} {version} will be installed to {program_path:?}");
 
     let os = consts::OS;
-    let arch = match consts::ARCH {
-        "x86" => "386",
-        "x86_64" => "amd64",
-        _ => consts::ARCH,
-    };
+    let arch = get_arch(consts::ARCH);
 
     let archive = get_terraform_version_zip(version, os, arch)?;
     extract_zip_archive(&program_path, archive)
+}
+
+fn get_arch<'a>(arch: &'a str) -> &'a str {
+    match arch {
+        "x86" => "386",
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        _ => arch,
+    }
 }
 
 fn get_terraform_version_zip(
@@ -377,5 +382,26 @@ mod tests {
         drop(file);
         tmp_dir.close()?;
         Ok(())
+    }
+
+    #[test]
+    fn test_get_arch_x86() {
+        let expected_arch = "386";
+        let actual_arch = get_arch("x86");
+        assert_eq!(expected_arch, actual_arch);
+    }
+
+    #[test]
+    fn test_get_arch_x64_64() {
+        let expected_arch = "amd64";
+        let actual_arch = get_arch("x86_64");
+        assert_eq!(expected_arch, actual_arch);
+    }
+
+    #[test]
+    fn test_get_arch_aarch64() {
+        let expected_arch = "arm64";
+        let actual_arch = get_arch("aarch64");
+        assert_eq!(expected_arch, actual_arch);
     }
 }
