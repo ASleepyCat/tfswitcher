@@ -60,9 +60,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         panic!("could not find path to install terraform");
     };
 
-    let version = get_version_to_install(args)?;
-
-    install_version(program_path, &version)?;
+    if let Some(version) = get_version_to_install(args)? {
+        install_version(program_path, &version)?;
+    } else {
+        println!("no version to install");
+    }
 
     Ok(())
 }
@@ -82,15 +84,15 @@ fn find_terraform_program_path() -> Option<PathBuf> {
     }
 }
 
-fn get_version_to_install(args: Args) -> Result<String, Box<dyn Error>> {
+fn get_version_to_install(args: Args) -> Result<Option<String>, Box<dyn Error>> {
     if let Some(version) = args.version {
-        return Ok(version);
+        return Ok(Some(version));
     }
 
     let versions = get_terraform_versions(args, ARCHIVE_URL)?;
 
     if let Some(version_from_module) = get_version_from_module(&versions)? {
-        return Ok(version_from_module);
+        return Ok(Some(version_from_module));
     }
 
     get_version_from_user_prompt(&versions)
@@ -146,20 +148,15 @@ fn get_version_from_module(versions: &[String]) -> Result<Option<String>, Box<dy
     Ok(None)
 }
 
-fn get_version_from_user_prompt(versions: &[String]) -> Result<String, Box<dyn Error>> {
-    let version = prompt_version_to_user(versions)?;
-
-    Ok(version)
-}
-
-fn prompt_version_to_user(versions: &[String]) -> Result<String, Box<dyn Error>> {
+fn get_version_from_user_prompt(versions: &[String]) -> Result<Option<String>, Box<dyn Error>> {
     println!("select a terraform version to install");
-    let selection = Select::with_theme(&ColorfulTheme::default())
+    match Select::with_theme(&ColorfulTheme::default())
         .items(versions)
         .default(0)
-        .interact()?;
-
-    Ok(versions[selection].to_owned())
+        .interact_opt()? {
+            Some(selection) => Ok(Some(versions[selection].to_owned())),
+            None => Ok(None),
+        }
 }
 
 fn install_version(program_path: PathBuf, version: &str) -> Result<(), Box<dyn Error>> {
