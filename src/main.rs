@@ -58,13 +58,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     let Some(program_path) = find_terraform_program_path() else {
-        panic!("could not find path to install terraform");
+        println!("Could not find path to install Terraform");
+        return Ok(());
     };
 
     if let Some(version) = get_version_to_install(args)? {
         install_version(program_path, &version)?;
     } else {
-        println!("no version to install");
+        println!("No version to install");
     }
 
     Ok(())
