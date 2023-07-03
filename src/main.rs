@@ -246,7 +246,7 @@ fn extract_zip_archive(
 
 #[cfg(unix)]
 fn create_output_file(program_path: &PathBuf) -> Result<File, Box<dyn Error>> {
-    let mut file = File::create(program_path)?;
+    let file = File::create(program_path)?;
     let mut perms = file.metadata()?.permissions();
     perms.set_mode(0o755);
     file.set_permissions(perms)?;
