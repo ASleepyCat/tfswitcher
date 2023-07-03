@@ -10,11 +10,13 @@ use std::{
     error::Error,
     fs::{self, File},
     io::{self, Cursor},
-    os::unix::prelude::PermissionsExt,
     path::PathBuf,
     str::FromStr,
 };
 use zip::ZipArchive;
+
+#[cfg(unix)]
+use std::os::unix::prelude::PermissionsExt;
 
 const ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
 const DEFAULT_LOCATION: &str = ".local/bin";
@@ -234,9 +236,11 @@ fn extract_zip_archive(
 
     // Create a new file for the extracted file and set rwxr-xr-x
     let mut outfile = File::create(program_path)?;
-    let mut perms = outfile.metadata()?.permissions();
-    perms.set_mode(0o755);
-    outfile.set_permissions(perms)?;
+    if cfg!(unix) {
+        let mut perms = outfile.metadata()?.permissions();
+        perms.set_mode(0o755);
+        outfile.set_permissions(perms)?;
+    }
 
     // Write the contents of the file to the output file
     io::copy(&mut file, &mut outfile)?;
