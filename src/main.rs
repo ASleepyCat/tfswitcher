@@ -173,7 +173,7 @@ fn install_version(program_path: PathBuf, version: &str) -> Result<(), Box<dyn E
     extract_zip_archive(&program_path, archive)
 }
 
-fn get_arch<'a>(arch: &'a str) -> &'a str {
+fn get_arch(arch: &str) -> &str {
     match arch {
         "x86" => "386",
         "x86_64" => "amd64",
@@ -377,7 +377,7 @@ mod tests {
 
         let tmp_dir = TempDir::new("test_get_version_from_module")?;
         let file_path = tmp_dir.path().join("version.tf");
-        let mut file = File::create(&file_path)?;
+        let mut file = File::create(file_path)?;
         file.write_all(b"terraform { required_version = \"1.0.0\" }")?;
         env::set_current_dir(Path::new(&tmp_dir.path()))?;
 
