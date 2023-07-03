@@ -504,7 +504,7 @@ checksum = "b6c80984affa11d98d1b88b66ac8853f143217b399d3c74116778ff8fdb4ed2e"
 [[package]]
 name = "gobuild"
 version = "0.1.0-alpha.2"
-source = "git+https://github.com/ASleepyCat/gobuild?branch=fix-spaces-in-path#828b8b8e997fcde192179f32af6f7912c0d09875"
+source = "git+https://github.com/ASleepyCat/gobuild?branch=fix-spaces-in-path#d09602cb440ee84d3e5a5d7e4729070335f6ea1a"
 dependencies = [
  "cc",
 ]
