@@ -22,8 +22,9 @@ semver = "1.0.17"
 tempdir = "0.3.7"
 zip = "0.6.4"
 
-[patch.crates-io]
-semver = { git = "https://github.com/ASleepyCat/semver", branch = "tilde-arrow" }
-
 [build-dependencies]
 gobuild = "0.1.0-alpha.2"
+
+[patch.crates-io]
+gobuild = { git = "https://github.com/ASleepyCat/gobuild", branch = "fix-spaces-in-path" }
+semver = { git = "https://github.com/ASleepyCat/semver", branch = "tilde-arrow" }

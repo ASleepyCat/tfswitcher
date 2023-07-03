@@ -504,8 +504,7 @@ checksum = "b6c80984affa11d98d1b88b66ac8853f143217b399d3c74116778ff8fdb4ed2e"
 [[package]]
 name = "gobuild"
 version = "0.1.0-alpha.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71e156a4ddbf3deb5e8116946c111413bd9a5679bdc1536c78a60618a7a9ac9e"
+source = "git+https://github.com/ASleepyCat/gobuild?branch=fix-spaces-in-path#828b8b8e997fcde192179f32af6f7912c0d09875"
 dependencies = [
  "cc",
 ]
