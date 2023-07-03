@@ -235,18 +235,28 @@ fn extract_zip_archive(
     println!("Extracting {file_name} to {program_path:?}");
 
     // Create a new file for the extracted file and set rwxr-xr-x
-    let mut outfile = File::create(program_path)?;
-    if cfg!(unix) {
-        let mut perms = outfile.metadata()?.permissions();
-        perms.set_mode(0o755);
-        outfile.set_permissions(perms)?;
-    }
+    let mut outfile = create_output_file(program_path)?;
 
     // Write the contents of the file to the output file
     io::copy(&mut file, &mut outfile)?;
 
     println!("Extracted archive to {program_path:?}");
     Ok(())
+}
+
+#[cfg(unix)]
+fn create_output_file(program_path: &PathBuf) -> Result<File, Box<dyn Error>> {
+    let mut file = File::create(program_path)?;
+    let mut perms = file.metadata()?.permissions();
+    perms.set_mode(0o755);
+    file.set_permissions(perms)?;
+
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn create_output_file(program_path: &PathBuf) -> Result<File, Box<dyn Error>> {
+    Ok(File::create(program_path)?)
 }
 
 #[cfg(test)]
