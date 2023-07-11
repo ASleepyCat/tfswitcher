@@ -389,6 +389,7 @@ mod tests {
         let file_path = tmp_dir.path().join("version.tf");
         let mut file = File::create(file_path)?;
         file.write_all(b"terraform { required_version = \"1.0.0\" }")?;
+        let current_dir = env::current_dir()?;
         env::set_current_dir(Path::new(&tmp_dir.path()))?;
 
         let actual_version = get_version_from_module(&versions)?;
@@ -396,6 +397,7 @@ mod tests {
         assert_eq!(EXPECTED_VERSION, actual_version.unwrap());
 
         drop(file);
+        env::set_current_dir(current_dir)?;
         tmp_dir.close()?;
         Ok(())
     }
