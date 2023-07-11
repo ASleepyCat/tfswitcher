@@ -1,5 +1,5 @@
 # tfswitcher
-[tfswitch](https://github.com/warrensbox/terraform-switcher/)-like program but written in Rust.
+[`tfswitch`](https://github.com/warrensbox/terraform-switcher/)-like program but written in Rust.
 
 # Motivations
 * Improved performance on WSL (if `$PATH` contains Windows directories)
@@ -13,3 +13,9 @@ This is not a complete reimplementation of `tfswitch`, as there are some missing
 This is also my first non-trivial public Rust project; if there is a mistake I've made that doesn't conform to standard Rust coding practices, please raise an issue about it.
 
 This has not been tested on Windows or macOS, so YMMV.
+
+# Where's `v0.1.0`?
+`v0.1.0` used FFI with Cgo in order to use HashiCorp's [`terraform-config-inspect`](https://github.com/hashicorp/terraform-config-inspect) library.
+This was inadvertently published as the Windows and macOS builds were broken and is yanked.
+
+`v0.2.0` replaced the Go library with a partially-reimplemented Rust library to eliminate FFI and makes building for Windows and macOS a lot less painful.
