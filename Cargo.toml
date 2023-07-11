@@ -1,6 +1,6 @@
 [package]
 name = "tfswitcher"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["ASleepyCat dyeom340@gmail.com"]
 license = "MIT"
@@ -20,11 +20,8 @@ regex = "1.8.1"
 reqwest = { version = "0.11.16", features = ["json", "blocking"] }
 semver = "1.0.17"
 tempdir = "0.3.7"
+tfconfig = "0.1.0"
 zip = "0.6.4"
 
-[build-dependencies]
-gobuild = "0.1.0-alpha.2"
-
 [patch.crates-io]
-gobuild = { git = "https://github.com/ASleepyCat/gobuild", branch = "fix-spaces-in-path" }
 semver = { git = "https://github.com/ASleepyCat/semver", branch = "tilde-arrow" }

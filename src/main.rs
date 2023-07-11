@@ -1,5 +1,3 @@
-mod ffi;
-
 use clap::Parser;
 use dialoguer::{theme::ColorfulTheme, Select};
 use regex::Regex;
@@ -134,14 +132,15 @@ fn capture_terraform_versions(args: Args, contents: &str) -> Vec<String> {
 }
 
 fn get_version_from_module(versions: &[String]) -> Result<Option<String>, Box<dyn Error>> {
-    let version_constraint = match ffi::get_version_from_module() {
-        Some(constraint) => constraint,
+    let module = tfconfig::load_module(&".".into())?;
+    let version_constraint = match module.required_core.first() {
+        Some(version) => version,
         None => return Ok(None),
     };
 
     println!("Module constraint is {version_constraint}");
 
-    let req = VersionReq::parse(&version_constraint)?;
+    let req = VersionReq::parse(version_constraint)?;
     for version in versions {
         let v = Version::from_str(version)?;
         if req.matches(&v) {
@@ -157,10 +156,11 @@ fn get_version_from_user_prompt(versions: &[String]) -> Result<Option<String>, B
     match Select::with_theme(&ColorfulTheme::default())
         .items(versions)
         .default(0)
-        .interact_opt()? {
-            Some(selection) => Ok(Some(versions[selection].to_owned())),
-            None => Ok(None),
-        }
+        .interact_opt()?
+    {
+        Some(selection) => Ok(Some(versions[selection].to_owned())),
+        None => Ok(None),
+    }
 }
 
 fn install_version(program_path: PathBuf, version: &str) -> Result<(), Box<dyn Error>> {
@@ -265,73 +265,73 @@ mod tests {
     use std::{io::Write, path::Path};
     use tempdir::TempDir;
 
-    const LINES: &str = "<html><head>
+    const LINES: &str = r#"<html><head>
         <title>Terraform Versions | HashiCorp Releases</title>
 
     </head>
     <body>
         <ul>
             <li>
-            <a href=\"../\">../</a>
+            <a href="../">../</a>
             </li>
             <li>
-            <a href=\"/terraform/1.3.0/\">terraform_1.3.0</a>
+            <a href="/terraform/1.3.0/">terraform_1.3.0</a>
             </li>
             <li>
-            <a href=\"/terraform/1.3.0-rc1/\">terraform_1.3.0-rc1</a>
+            <a href="/terraform/1.3.0-rc1/">terraform_1.3.0-rc1</a>
             </li>
             <li>
-            <a href=\"/terraform/1.3.0-beta1/\">terraform_1.3.0-beta1</a>
+            <a href="/terraform/1.3.0-beta1/">terraform_1.3.0-beta1</a>
             </li>
             <li>
-            <a href=\"/terraform/1.3.0-alpha20220608/\">terraform_1.3.0-alpha20220608</a>
+            <a href="/terraform/1.3.0-alpha20220608/">terraform_1.3.0-alpha20220608</a>
             </li>
             <li>
-            <a href=\"/terraform/1.2.0/\">terraform_1.2.0</a>
+            <a href="/terraform/1.2.0/">terraform_1.2.0</a>
             </li>
             <li>
-            <a href=\"/terraform/1.2.0-rc1/\">terraform_1.2.0-rc1</a>
+            <a href="/terraform/1.2.0-rc1/">terraform_1.2.0-rc1</a>
             </li>
             <li>
-            <a href=\"/terraform/1.2.0-beta1/\">terraform_1.2.0-beta1</a>
+            <a href="/terraform/1.2.0-beta1/">terraform_1.2.0-beta1</a>
             </li>
             <li>
-            <a href=\"/terraform/1.2.0-alpha20220413/\">terraform_1.2.0-alpha20220413</a>
+            <a href="/terraform/1.2.0-alpha20220413/">terraform_1.2.0-alpha20220413</a>
             </li>
             <li>
-            <a href=\"/terraform/1.2.0-alpha-20220328/\">terraform_1.2.0-alpha-20220328</a>
+            <a href="/terraform/1.2.0-alpha-20220328/">terraform_1.2.0-alpha-20220328</a>
             </li>
             <li>
-            <a href=\"/terraform/1.1.0/\">terraform_1.1.0</a>
+            <a href="/terraform/1.1.0/">terraform_1.1.0</a>
             </li>
             <li>
-            <a href=\"/terraform/1.1.0-rc1/\">terraform_1.1.0-rc1</a>
+            <a href="/terraform/1.1.0-rc1/">terraform_1.1.0-rc1</a>
             </li>
             <li>
-            <a href=\"/terraform/1.1.0-beta1/\">terraform_1.1.0-beta1</a>
+            <a href="/terraform/1.1.0-beta1/">terraform_1.1.0-beta1</a>
             </li>
             <li>
-            <a href=\"/terraform/1.1.0-alpha20211029/\">terraform_1.1.0-alpha20211029</a>
+            <a href="/terraform/1.1.0-alpha20211029/">terraform_1.1.0-alpha20211029</a>
             </li>
             <li>
-            <a href=\"/terraform/1.0.0/\">terraform_1.0.0</a>
+            <a href="/terraform/1.0.0/">terraform_1.0.0</a>
             </li>
             <li>
-            <a href=\"/terraform/0.15.0/\">terraform_0.15.0</a>
+            <a href="/terraform/0.15.0/">terraform_0.15.0</a>
             </li>
             <li>
-            <a href=\"/terraform/0.15.0-rc1/\">terraform_0.15.0-rc1</a>
+            <a href="/terraform/0.15.0-rc1/">terraform_0.15.0-rc1</a>
             </li>
             <li>
-            <a href=\"/terraform/0.15.0-beta1/\">terraform_0.15.0-beta1</a>
+            <a href="/terraform/0.15.0-beta1/">terraform_0.15.0-beta1</a>
             </li>
             <li>
-            <a href=\"/terraform/0.15.0-alpha20210107/\">terraform_0.15.0-alpha20210107</a>
+            <a href="/terraform/0.15.0-alpha20210107/">terraform_0.15.0-alpha20210107</a>
             </li>
             
         </ul>
 
-</body></html>";
+</body></html>"#;
 
     #[test]
     fn test_capture_terraform_versions() -> Result<(), Box<dyn Error>> {

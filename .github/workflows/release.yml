@@ -18,12 +18,6 @@ jobs:
             archive: zip
     steps:
       - uses: actions/checkout@v3
-      - run: |
-          cat <<EOF >> pre.sh
-          apk add --no-cache go
-          go version
-          EOF
-          chmod +x pre.sh
       - name: Compile and release
         uses: rust-build/rust-build.action@v1.4.3
         env:
@@ -32,7 +26,6 @@ jobs:
           RUSTTARGET: ${{ matrix.target }}
           EXTRA_FILES: "NOTICE"
           ARCHIVE_TYPES: ${{ matrix.archive }}
-          PRE_BUILD: "pre.sh"
   publish:
     name: Publish
     runs-on: ubuntu-latest
