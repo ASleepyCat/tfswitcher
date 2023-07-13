@@ -1235,11 +1235,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "semver"
-version = "1.0.17"
-source = "git+https://github.com/ASleepyCat/semver?branch=tilde-arrow#5c0f1b6a814b0f3a9a0ac57d9ec1234828bfe8c2"
-
-[[package]]
 name = "serde"
 version = "1.0.171"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1383,6 +1378,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "tf-semver"
+version = "1.0.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62808a5042487d591eaffdfc1b0cae0cf0e08b3c13df526dc306e7e2e9148ee3"
+
+[[package]]
 name = "tfconfig"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1402,8 +1403,8 @@ dependencies = [
  "home",
  "regex",
  "reqwest",
- "semver",
  "tempdir",
+ "tf-semver",
  "tfconfig",
  "zip",
 ]
