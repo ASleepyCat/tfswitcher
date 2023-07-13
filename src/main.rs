@@ -388,7 +388,7 @@ mod tests {
         let tmp_dir = TempDir::new("test_get_version_from_module")?;
         let file_path = tmp_dir.path().join("version.tf");
         let mut file = File::create(file_path)?;
-        file.write_all(b"terraform { required_version = \"1.0.0\" }")?;
+        file.write_all(b"terraform { required_version = \"~>1.0.0\" }")?;
         let current_dir = env::current_dir()?;
         env::set_current_dir(Path::new(&tmp_dir.path()))?;
 
