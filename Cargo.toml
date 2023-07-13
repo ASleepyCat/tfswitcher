@@ -1,6 +1,6 @@
 [package]
 name = "tfswitcher"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 authors = ["ASleepyCat dyeom340@gmail.com"]
 license = "MIT"
@@ -18,10 +18,7 @@ dialoguer = "0.10.4"
 home = "0.5.4"
 regex = "1.8.1"
 reqwest = { version = "0.11.16", features = ["json", "blocking"] }
-semver = "1.0.17"
+semver = { version = "1.0.17", package = "tf-semver" }
 tempdir = "0.3.7"
 tfconfig = "0.1.0"
 zip = "0.6.4"
-
-[patch.crates-io]
-semver = { git = "https://github.com/ASleepyCat/semver", branch = "tilde-arrow" }
