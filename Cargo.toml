@@ -20,5 +20,5 @@ regex = "1.8.1"
 reqwest = { version = "0.11.16", features = ["json", "blocking"] }
 semver = { version = "1.0.17", package = "tf-semver" }
 tempdir = "0.3.7"
-tfconfig = "0.1.0"
+tfconfig = "0.2.0"
 zip = "0.6.4"
