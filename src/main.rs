@@ -8,7 +8,7 @@ use std::{
     error::Error,
     fs::{self, File},
     io::{self, Cursor},
-    path::PathBuf,
+    path::{PathBuf, Path},
     str::FromStr,
 };
 use zip::ZipArchive;
@@ -132,7 +132,7 @@ fn capture_terraform_versions(args: Args, contents: &str) -> Vec<String> {
 }
 
 fn get_version_from_module(versions: &[String]) -> Result<Option<String>, Box<dyn Error>> {
-    let module = tfconfig::load_module(&".".into())?;
+    let module = tfconfig::load_module(Path::new("."), false)?;
     let version_constraint = match module.required_core.first() {
         Some(version) => version,
         None => return Ok(None),
