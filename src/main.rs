@@ -18,6 +18,7 @@ use std::os::unix::prelude::PermissionsExt;
 
 const ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
 const DEFAULT_LOCATION: &str = ".local/bin";
+const DEFAULT_CACHE_LOCATION: &str = ".cache/tfswitcher";
 const PROGRAM_NAME: &str = "terraform";
 
 #[derive(Parser, Debug)]
@@ -190,7 +191,7 @@ fn get_terraform_version_zip(
     let zip_name = format!("terraform_{version}_{os}_{arch}.zip");
 
     if let Some(path) = home::home_dir().as_mut() {
-        path.push(format!("{DEFAULT_LOCATION}/{zip_name}"));
+        path.push(format!("{DEFAULT_CACHE_LOCATION}/{zip_name}"));
 
         if path.exists() {
             println!("Using cached archive at {path:?}");
@@ -214,16 +215,28 @@ fn download_and_save_terraform_version_zip(
     let response = get_http(&url)?;
     let buffer = response.bytes()?.to_vec();
 
-    match home::home_dir() {
-        Some(mut path) => {
-            path.push(format!("{DEFAULT_LOCATION}/{zip_name}"));
-            fs::write(path, &buffer)?;
-        }
-        None => println!("Unable to cache archive"),
-    }
+    cache_zip_file(zip_name, &buffer);
 
     let cursor = Cursor::new(buffer);
     Ok(ZipArchive::new(cursor)?)
+}
+
+fn cache_zip_file(zip_name: &str, buffer: &[u8]) {
+    match home::home_dir() {
+        Some(mut path) => {
+            path.push(DEFAULT_CACHE_LOCATION);
+            if let Err(e) = fs::create_dir_all(&path) {
+                println!("Unable to cache archive: {e}");
+                return;
+            };
+            path.push(zip_name);
+            if let Err(e) = fs::write(path, buffer) {
+                println!("Unable to cache archive: {e}");
+                return;
+            };
+        }
+        None => println!("Unable to cache archive: could not find home directory"),
+    }
 }
 
 fn extract_zip_archive(
