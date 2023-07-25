@@ -80,7 +80,7 @@ fn find_terraform_program_path() -> Option<PathBuf> {
     match home::home_dir() {
         Some(mut path) => {
             path.push(format!("{DEFAULT_LOCATION}/{PROGRAM_NAME}"));
-            println!("Could not locate {PROGRAM_NAME}, installing to {path:?}\nmake sure to include the directory into your $PATH");
+            println!("Could not locate {PROGRAM_NAME}, installing to {path:?}\nMake sure to include the directory into your $PATH");
             Some(path)
         }
         None => None,
