@@ -215,29 +215,27 @@ fn download_and_save_terraform_version_zip(
     let response = get_http(&url)?;
     let buffer = response.bytes()?.to_vec();
 
-    cache_zip_file(zip_name, &buffer);
+    match home::home_dir() {
+        Some(mut path) => {
+            path.push(DEFAULT_CACHE_LOCATION);
+            println!("Caching archive to {path:?}");
+            if let Err(e) = cache_zip_file(&mut path, zip_name, &buffer) {
+                println!("Unable to cache archive: {e}");
+            };
+        }
+        None => println!("Unable to cache archive: could not find home directory"),
+    }
 
     let cursor = Cursor::new(buffer);
     Ok(ZipArchive::new(cursor)?)
 }
 
-fn cache_zip_file(zip_name: &str, buffer: &[u8]) {
-    match home::home_dir() {
-        Some(mut path) => {
-            path.push(DEFAULT_CACHE_LOCATION);
-            println!("Caching archive to {path:?}");
-            if let Err(e) = fs::create_dir_all(&path) {
-                println!("Unable to cache archive: {e}");
-                return;
-            };
-            path.push(zip_name);
-            if let Err(e) = fs::write(path, buffer) {
-                println!("Unable to cache archive: {e}");
-                return;
-            };
-        }
-        None => println!("Unable to cache archive: could not find home directory"),
-    }
+fn cache_zip_file(cache_location: &mut PathBuf, zip_name: &str, buffer: &[u8]) -> Result<(), Box<dyn Error>> {
+    fs::create_dir_all(&cache_location)?;
+    cache_location.push(zip_name);
+    fs::write(cache_location, buffer)?;
+
+    Ok(())
 }
 
 fn extract_zip_archive(
@@ -397,7 +395,7 @@ mod tests {
     #[test]
     fn test_get_version_from_module() -> Result<(), Box<dyn Error>> {
         const EXPECTED_VERSION: &str = "1.0.0";
-        let versions: Vec<String> = vec![EXPECTED_VERSION.to_string()];
+        let versions = vec![EXPECTED_VERSION.to_string()];
 
         let tmp_dir = TempDir::new("test_get_version_from_module")?;
         let file_path = tmp_dir.path().join("version.tf");
@@ -410,9 +408,7 @@ mod tests {
         assert!(actual_version.is_some());
         assert_eq!(EXPECTED_VERSION, actual_version.unwrap());
 
-        drop(file);
         env::set_current_dir(current_dir)?;
-        tmp_dir.close()?;
         Ok(())
     }
 
@@ -435,5 +431,38 @@ mod tests {
         let expected_arch = "arm64";
         let actual_arch = get_arch("aarch64");
         assert_eq!(expected_arch, actual_arch);
+    }
+
+    #[test]
+    fn test_cache_zip_file() -> Result<(), Box<dyn Error>> {
+        const ZIP_NAME: &str = "test_archive.zip";
+
+        let tmp_dir = TempDir::new("test_cache_zip_file")?;
+        let sub_dir = tmp_dir.path().join("tfswitcher");
+        let file_path = sub_dir.join(ZIP_NAME);
+        let buffer = vec![];
+
+        cache_zip_file(&mut sub_dir.to_owned(), ZIP_NAME, &buffer)?;
+
+        assert!(file_path.exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cache_zip_file_dir_exists() -> Result<(), Box<dyn Error>> {
+        const ZIP_NAME: &str = "test_archive.zip";
+
+        let tmp_dir = TempDir::new("test_cache_zip_file_dir_exists")?;
+        let sub_dir = tmp_dir.path().join("tfswitcher");
+        fs::create_dir_all(&sub_dir)?;
+        let file_path = sub_dir.join(ZIP_NAME);
+        let buffer = vec![];
+
+        cache_zip_file(&mut sub_dir.to_owned(), ZIP_NAME, &buffer)?;
+
+        assert!(file_path.exists());
+
+        Ok(())
     }
 }
