@@ -225,6 +225,7 @@ fn cache_zip_file(zip_name: &str, buffer: &[u8]) {
     match home::home_dir() {
         Some(mut path) => {
             path.push(DEFAULT_CACHE_LOCATION);
+            println!("Caching archive to {path:?}");
             if let Err(e) = fs::create_dir_all(&path) {
                 println!("Unable to cache archive: {e}");
                 return;
