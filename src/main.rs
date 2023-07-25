@@ -18,6 +18,7 @@ use std::os::unix::prelude::PermissionsExt;
 
 const ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
 const DEFAULT_LOCATION: &str = ".local/bin";
+const DEFAULT_CACHE_LOCATION: &str = ".cache/tfswitcher";
 const PROGRAM_NAME: &str = "terraform";
 
 #[derive(Parser, Debug)]
@@ -79,7 +80,7 @@ fn find_terraform_program_path() -> Option<PathBuf> {
     match home::home_dir() {
         Some(mut path) => {
             path.push(format!("{DEFAULT_LOCATION}/{PROGRAM_NAME}"));
-            println!("Could not locate {PROGRAM_NAME}, installing to {path:?}\nmake sure to include the directory into your $PATH");
+            println!("Could not locate {PROGRAM_NAME}, installing to {path:?}\nMake sure to include the directory into your $PATH");
             Some(path)
         }
         None => None,
@@ -190,7 +191,7 @@ fn get_terraform_version_zip(
     let zip_name = format!("terraform_{version}_{os}_{arch}.zip");
 
     if let Some(path) = home::home_dir().as_mut() {
-        path.push(format!("{DEFAULT_LOCATION}/{zip_name}"));
+        path.push(format!("{DEFAULT_CACHE_LOCATION}/{zip_name}"));
 
         if path.exists() {
             println!("Using cached archive at {path:?}");
@@ -216,14 +217,25 @@ fn download_and_save_terraform_version_zip(
 
     match home::home_dir() {
         Some(mut path) => {
-            path.push(format!("{DEFAULT_LOCATION}/{zip_name}"));
-            fs::write(path, &buffer)?;
+            path.push(DEFAULT_CACHE_LOCATION);
+            println!("Caching archive to {path:?}");
+            if let Err(e) = cache_zip_file(&mut path, zip_name, &buffer) {
+                println!("Unable to cache archive: {e}");
+            };
         }
-        None => println!("Unable to cache archive"),
+        None => println!("Unable to cache archive: could not find home directory"),
     }
 
     let cursor = Cursor::new(buffer);
     Ok(ZipArchive::new(cursor)?)
+}
+
+fn cache_zip_file(cache_location: &mut PathBuf, zip_name: &str, buffer: &[u8]) -> Result<(), Box<dyn Error>> {
+    fs::create_dir_all(&cache_location)?;
+    cache_location.push(zip_name);
+    fs::write(cache_location, buffer)?;
+
+    Ok(())
 }
 
 fn extract_zip_archive(
@@ -383,7 +395,7 @@ mod tests {
     #[test]
     fn test_get_version_from_module() -> Result<(), Box<dyn Error>> {
         const EXPECTED_VERSION: &str = "1.0.0";
-        let versions: Vec<String> = vec![EXPECTED_VERSION.to_string()];
+        let versions = vec![EXPECTED_VERSION.to_string()];
 
         let tmp_dir = TempDir::new("test_get_version_from_module")?;
         let file_path = tmp_dir.path().join("version.tf");
@@ -396,9 +408,7 @@ mod tests {
         assert!(actual_version.is_some());
         assert_eq!(EXPECTED_VERSION, actual_version.unwrap());
 
-        drop(file);
         env::set_current_dir(current_dir)?;
-        tmp_dir.close()?;
         Ok(())
     }
 
@@ -421,5 +431,38 @@ mod tests {
         let expected_arch = "arm64";
         let actual_arch = get_arch("aarch64");
         assert_eq!(expected_arch, actual_arch);
+    }
+
+    #[test]
+    fn test_cache_zip_file() -> Result<(), Box<dyn Error>> {
+        const ZIP_NAME: &str = "test_archive.zip";
+
+        let tmp_dir = TempDir::new("test_cache_zip_file")?;
+        let sub_dir = tmp_dir.path().join("tfswitcher");
+        let file_path = sub_dir.join(ZIP_NAME);
+        let buffer = vec![];
+
+        cache_zip_file(&mut sub_dir.to_owned(), ZIP_NAME, &buffer)?;
+
+        assert!(file_path.exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cache_zip_file_dir_exists() -> Result<(), Box<dyn Error>> {
+        const ZIP_NAME: &str = "test_archive.zip";
+
+        let tmp_dir = TempDir::new("test_cache_zip_file_dir_exists")?;
+        let sub_dir = tmp_dir.path().join("tfswitcher");
+        fs::create_dir_all(&sub_dir)?;
+        let file_path = sub_dir.join(ZIP_NAME);
+        let buffer = vec![];
+
+        cache_zip_file(&mut sub_dir.to_owned(), ZIP_NAME, &buffer)?;
+
+        assert!(file_path.exists());
+
+        Ok(())
     }
 }
