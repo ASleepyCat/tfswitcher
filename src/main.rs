@@ -1,11 +1,10 @@
+use anyhow::{bail, Context, Ok, Result};
 use clap::Parser;
 use dialoguer::{theme::ColorfulTheme, Select};
 use regex::Regex;
-use reqwest::blocking::Response;
 use semver::{Version, VersionReq};
 use std::{
     env::consts,
-    error::Error,
     fs::{self, File},
     io::{self, Cursor},
     path::{Path, PathBuf},
@@ -32,26 +31,17 @@ struct Args {
     install_version: Option<String>,
 }
 
-fn get_http(url: &str) -> Result<Response, Box<dyn Error>> {
-    let response = reqwest::blocking::get(url)?;
-    match response.error_for_status_ref() {
-        Ok(_) => Ok(response),
-        Err(e) => Err(Box::new(e)),
-    }
-}
-
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     let Some(program_path) = find_terraform_program_path() else {
-        println!("Could not find path to install Terraform");
-        return Ok(());
+        bail!("could not find path to install Terraform");
     };
 
     if let Some(version) = get_version_to_install(args)? {
         install_version(&program_path, &version)?;
     } else {
-        println!("No version to install");
+        bail!("no version to install");
     }
 
     Ok(())
@@ -72,7 +62,7 @@ fn find_terraform_program_path() -> Option<PathBuf> {
     }
 }
 
-fn get_version_to_install(args: Args) -> Result<Option<String>, Box<dyn Error>> {
+fn get_version_to_install(args: Args) -> Result<Option<String>> {
     if let Some(version) = args.install_version {
         return Ok(Some(version));
     }
@@ -86,8 +76,8 @@ fn get_version_to_install(args: Args) -> Result<Option<String>, Box<dyn Error>> 
     get_version_from_user_prompt(&versions)
 }
 
-fn get_terraform_versions(args: Args, url: &str) -> Result<Vec<String>, Box<dyn Error>> {
-    let response = get_http(url)?;
+fn get_terraform_versions(args: Args, url: &str) -> Result<Vec<String>> {
+    let response = reqwest::blocking::get(url)?.error_for_status()?;
     let contents = response.text()?;
 
     let versions = capture_terraform_versions(args, &contents);
@@ -117,7 +107,7 @@ fn capture_terraform_versions(args: Args, contents: &str) -> Vec<String> {
     versions
 }
 
-fn get_version_from_module(versions: &[String]) -> Result<Option<String>, Box<dyn Error>> {
+fn get_version_from_module(versions: &[String]) -> Result<Option<String>> {
     let module = tfconfig::load_module(Path::new("."), false)?;
     let version_constraint = match module.required_core.first() {
         Some(version) => version,
@@ -126,9 +116,11 @@ fn get_version_from_module(versions: &[String]) -> Result<Option<String>, Box<dy
 
     println!("Module constraint is {version_constraint}");
 
-    let req = VersionReq::parse(version_constraint)?;
+    let req = VersionReq::parse(version_constraint)
+        .with_context(|| format!("failed to parse version constraint {version_constraint}"))?;
     for version in versions {
-        let v = Version::from_str(version)?;
+        let v = Version::from_str(version)
+            .with_context(|| format!("failed to parse version {version}"))?;
         if req.matches(&v) {
             return Ok(Some(version.to_owned()));
         }
@@ -137,19 +129,20 @@ fn get_version_from_module(versions: &[String]) -> Result<Option<String>, Box<dy
     Ok(None)
 }
 
-fn get_version_from_user_prompt(versions: &[String]) -> Result<Option<String>, Box<dyn Error>> {
-    println!("Select a terraform version to install");
+fn get_version_from_user_prompt(versions: &[String]) -> Result<Option<String>> {
+    println!("Select a Terraform version to install");
     match Select::with_theme(&ColorfulTheme::default())
         .items(versions)
         .default(0)
-        .interact_opt()?
+        .interact_opt()
+        .with_context(|| "failed to get version from user prompt")?
     {
         Some(selection) => Ok(Some(versions[selection].to_owned())),
         None => Ok(None),
     }
 }
 
-fn install_version(program_path: &Path, version: &str) -> Result<(), Box<dyn Error>> {
+fn install_version(program_path: &Path, version: &str) -> Result<()> {
     println!("Terraform {version} will be installed to {program_path:?}");
 
     let os = consts::OS;
@@ -172,7 +165,7 @@ fn get_terraform_version_zip(
     version: &str,
     os: &str,
     arch: &str,
-) -> Result<ZipArchive<Cursor<Vec<u8>>>, Box<dyn Error>> {
+) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
     let zip_name = format!("terraform_{version}_{os}_{arch}.zip");
 
     if let Some(path) = home::home_dir().as_mut() {
@@ -180,9 +173,11 @@ fn get_terraform_version_zip(
 
         if path.exists() {
             println!("Using cached archive at {path:?}");
-            let buffer = fs::read(path)?;
+            let buffer = fs::read(&path)
+                .with_context(|| format!("failed to read cached archive at {path:?}"))?;
             let cursor = Cursor::new(buffer);
-            let archive = ZipArchive::new(cursor)?;
+            let archive =
+                ZipArchive::new(cursor).with_context(|| "failed to read cached archive")?;
             return Ok(archive);
         }
     }
@@ -193,12 +188,18 @@ fn get_terraform_version_zip(
 fn download_and_save_terraform_version_zip(
     version: &str,
     zip_name: &str,
-) -> Result<ZipArchive<Cursor<Vec<u8>>>, Box<dyn Error>> {
+) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
     let url = format!("{ARCHIVE_URL}/{version}/{zip_name}");
     println!("Downloading archive from {url}");
 
-    let response = get_http(&url)?;
-    let buffer = response.bytes()?.to_vec();
+    let response = reqwest::blocking::get(url)
+        .with_context(|| "failed to send HTTP request")?
+        .error_for_status()
+        .with_context(|| "failed to download archive")?;
+    let buffer = response
+        .bytes()
+        .with_context(|| "failed to read HTTP response")?
+        .to_vec();
 
     match home::home_dir() {
         Some(mut path) => {
@@ -212,14 +213,10 @@ fn download_and_save_terraform_version_zip(
     }
 
     let cursor = Cursor::new(buffer);
-    Ok(ZipArchive::new(cursor)?)
+    Ok(ZipArchive::new(cursor).with_context(|| "failed to read HTTP response as ZIP archive")?)
 }
 
-fn cache_zip_file(
-    cache_location: &mut PathBuf,
-    zip_name: &str,
-    buffer: &[u8],
-) -> Result<(), Box<dyn Error>> {
+fn cache_zip_file(cache_location: &mut PathBuf, zip_name: &str, buffer: &[u8]) -> Result<()> {
     fs::create_dir_all(&cache_location)?;
     cache_location.push(zip_name);
     fs::write(cache_location, buffer)?;
@@ -230,8 +227,10 @@ fn cache_zip_file(
 fn extract_zip_archive(
     program_path: &Path,
     mut archive: ZipArchive<Cursor<Vec<u8>>>,
-) -> Result<(), Box<dyn Error>> {
-    let mut file = archive.by_index(0)?;
+) -> Result<()> {
+    let mut file = archive
+        .by_index(0)
+        .with_context(|| "could not get item in archive")?;
     let file_name = file.name();
     println!("Extracting {file_name} to {program_path:?}");
 
@@ -239,25 +238,31 @@ fn extract_zip_archive(
     let mut outfile = create_output_file(program_path)?;
 
     // Write the contents of the file to the output file
-    io::copy(&mut file, &mut outfile)?;
+    io::copy(&mut file, &mut outfile).with_context(|| "failed to extract zip archive")?;
 
     println!("Extracted archive to {program_path:?}");
     Ok(())
 }
 
 #[cfg(unix)]
-fn create_output_file(program_path: &Path) -> Result<File, Box<dyn Error>> {
-    let file = File::create(program_path)?;
-    let mut perms = file.metadata()?.permissions();
+fn create_output_file(program_path: &Path) -> Result<File> {
+    let file = File::create(program_path)
+        .with_context(|| format!("failed to create file at {program_path:?}"))?;
+    let mut perms = file
+        .metadata()
+        .with_context(|| "could not get file metadata")?
+        .permissions();
     perms.set_mode(0o755);
-    file.set_permissions(perms)?;
+    file.set_permissions(perms)
+        .with_context(|| "could not set file permissions")?;
 
     Ok(file)
 }
 
 #[cfg(windows)]
-fn create_output_file(program_path: &Path) -> Result<File, Box<dyn Error>> {
-    Ok(File::create(program_path)?)
+fn create_output_file(program_path: &Path) -> Result<File> {
+    Ok(File::create(program_path)
+        .with_context(|| format!("failed to create file at {program_path:?}"))?)
 }
 
 #[cfg(test)]
@@ -335,7 +340,7 @@ mod tests {
 </body></html>"#;
 
     #[test]
-    fn test_capture_terraform_versions() -> Result<(), Box<dyn Error>> {
+    fn test_capture_terraform_versions() -> Result<()> {
         let expected_versions = vec!["1.3.0", "1.2.0", "1.1.0", "1.0.0", "0.15.0"];
         let args = Args {
             list_all: false,
@@ -349,7 +354,7 @@ mod tests {
     }
 
     #[test]
-    fn test_capture_terraform_versions_list_all() -> Result<(), Box<dyn Error>> {
+    fn test_capture_terraform_versions_list_all() -> Result<()> {
         let expected_versions = vec![
             "1.3.0",
             "1.3.0-rc1",
@@ -382,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_version_from_module() -> Result<(), Box<dyn Error>> {
+    fn test_get_version_from_module() -> Result<()> {
         const EXPECTED_VERSION: &str = "1.0.0";
         let versions = vec![EXPECTED_VERSION.to_string()];
 
@@ -423,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_zip_file() -> Result<(), Box<dyn Error>> {
+    fn test_cache_zip_file() -> Result<()> {
         const ZIP_NAME: &str = "test_archive.zip";
 
         let tmp_dir = TempDir::new("test_cache_zip_file")?;
@@ -439,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_zip_file_dir_exists() -> Result<(), Box<dyn Error>> {
+    fn test_cache_zip_file_dir_exists() -> Result<()> {
         const ZIP_NAME: &str = "test_archive.zip";
 
         let tmp_dir = TempDir::new("test_cache_zip_file_dir_exists")?;
