@@ -21,7 +21,7 @@ const DEFAULT_LOCATION: &str = ".local/bin";
 const DEFAULT_CACHE_LOCATION: &str = ".cache/tfswitcher";
 const PROGRAM_NAME: &str = "terraform";
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Default, Debug)]
 #[command(version)]
 struct Args {
     /// Include pre-release versions
@@ -77,7 +77,8 @@ fn get_version_to_install(args: Args) -> Result<Option<String>> {
         return Ok(Some(version));
     }
 
-    let versions = get_terraform_versions(args, ARCHIVE_URL)?;
+    let contents = get_terraform_versions(ARCHIVE_URL)?;
+    let versions = capture_terraform_versions(&args, &contents);
 
     if let Some(version_from_module) = get_version_from_module(&versions)? {
         return Ok(Some(version_from_module));
@@ -86,15 +87,16 @@ fn get_version_to_install(args: Args) -> Result<Option<String>> {
     get_version_from_user_prompt(&versions)
 }
 
-fn get_terraform_versions(args: Args, url: &str) -> Result<Vec<String>> {
+fn get_terraform_versions(url: &str) -> Result<String> {
     let response = get_http(url)?;
-    let contents = response.text().with_context(|| "failed to get Terraform versions")?;
-    let versions = capture_terraform_versions(args, &contents);
+    let contents = response
+        .text()
+        .with_context(|| "failed to get Terraform versions")?;
 
-    Ok(versions)
+    Ok(contents)
 }
 
-fn capture_terraform_versions(args: Args, contents: &str) -> Vec<String> {
+fn capture_terraform_versions(args: &Args, contents: &str) -> Vec<String> {
     let mut versions = vec![];
 
     let lines: Vec<_> = contents.split('\n').collect();
@@ -177,21 +179,34 @@ fn get_terraform_version_zip(
 ) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
     let zip_name = format!("terraform_{version}_{os}_{arch}.zip");
 
-    if let Some(path) = home::home_dir().as_mut() {
-        path.push(format!("{DEFAULT_CACHE_LOCATION}/{zip_name}"));
+    if let Some(cursor) = get_cached_zip(home::home_dir().as_mut(), &zip_name)? {
+        let archive = ZipArchive::new(cursor).with_context(|| "failed to read cached archive")?;
+        return Ok(archive);
+    }
 
-        if path.exists() {
+    download_and_save_terraform_version_zip(version, &zip_name)
+}
+
+fn get_cached_zip(
+    home_dir: Option<&mut PathBuf>,
+    zip_name: &str,
+) -> Result<Option<Cursor<Vec<u8>>>> {
+    match home_dir {
+        Some(path) => {
+            path.push(format!("{DEFAULT_CACHE_LOCATION}/{zip_name}"));
+            if !path.exists() {
+                return Ok(None);
+            }
+
             println!("Using cached archive at {path:?}");
             let buffer = fs::read(&path)
                 .with_context(|| format!("failed to read cached archive at {path:?}"))?;
             let cursor = Cursor::new(buffer);
-            let archive =
-                ZipArchive::new(cursor).with_context(|| "failed to read cached archive")?;
-            return Ok(archive);
-        }
-    }
 
-    download_and_save_terraform_version_zip(version, &zip_name)
+            Ok(Some(cursor))
+        }
+        None => Ok(None),
+    }
 }
 
 fn download_and_save_terraform_version_zip(
@@ -211,7 +226,7 @@ fn download_and_save_terraform_version_zip(
         Some(mut path) => {
             path.push(DEFAULT_CACHE_LOCATION);
             println!("Caching archive to {path:?}");
-            if let Err(e) = cache_zip_file(&mut path, zip_name, &contents) {
+            if let Err(e) = cache_zip_archive(&mut path, zip_name, &contents) {
                 println!("Unable to cache archive: {e}");
             };
         }
@@ -222,7 +237,7 @@ fn download_and_save_terraform_version_zip(
     Ok(ZipArchive::new(cursor).with_context(|| "failed to read HTTP response as ZIP archive")?)
 }
 
-fn cache_zip_file(cache_location: &mut PathBuf, zip_name: &str, buffer: &[u8]) -> Result<()> {
+fn cache_zip_archive(cache_location: &mut PathBuf, zip_name: &str, buffer: &[u8]) -> Result<()> {
     fs::create_dir_all(&cache_location)?;
     cache_location.push(zip_name);
     fs::write(cache_location, buffer)?;
@@ -277,10 +292,11 @@ mod tests {
     use std::{env, io::Write, path::Path};
     use tempdir::TempDir;
 
-    const LINES: &str = r#"<html><head>
+    const LINES: &str = r#"<html>
+    <head>
         <title>Terraform Versions | HashiCorp Releases</title>
-
     </head>
+
     <body>
         <ul>
             <li>
@@ -340,19 +356,14 @@ mod tests {
             <li>
             <a href="/terraform/0.15.0-alpha20210107/">terraform_0.15.0-alpha20210107</a>
             </li>
-            
         </ul>
-
-</body></html>"#;
+    </body>
+</html>"#;
 
     #[test]
     fn test_capture_terraform_versions() -> Result<()> {
         let expected_versions = vec!["1.3.0", "1.2.0", "1.1.0", "1.0.0", "0.15.0"];
-        let args = Args {
-            list_all: false,
-            install_version: None,
-        };
-        let actual_versions = capture_terraform_versions(args, LINES);
+        let actual_versions = capture_terraform_versions(&Args::default(), LINES);
 
         assert_eq!(expected_versions, actual_versions);
 
@@ -385,7 +396,7 @@ mod tests {
             list_all: true,
             install_version: None,
         };
-        let actual_versions = capture_terraform_versions(args, LINES);
+        let actual_versions = capture_terraform_versions(&args, LINES);
 
         assert_eq!(expected_versions, actual_versions);
 
@@ -434,6 +445,42 @@ mod tests {
     }
 
     #[test]
+    fn test_get_cached_zip_not_exists() -> Result<()> {
+        const ZIP_NAME: &str = "test_archive.zip";
+
+        let tmp_dir = TempDir::new("test_get_cached_zip_not_exists")?;
+
+        let file = get_cached_zip(Some(&mut tmp_dir.path().to_path_buf()), ZIP_NAME)?;
+        assert!(file.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_cached_zip_home_dir_not_exists() -> Result<()> {
+        let file = get_cached_zip(None, "")?;
+        assert!(file.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_cached_zip_exists() -> Result<()> {
+        const ZIP_NAME: &str = "test_archive.zip";
+
+        let tmp_dir = TempDir::new("test_get_cached_zip_exists")?;
+        let cache_dir = tmp_dir.path().join(DEFAULT_CACHE_LOCATION);
+        let file_path = cache_dir.join(ZIP_NAME);
+        fs::create_dir_all(cache_dir)?;
+        fs::write(file_path, "")?;
+
+        let file = get_cached_zip(Some(&mut tmp_dir.path().to_path_buf()), ZIP_NAME)?;
+        assert!(file.is_some());
+
+        Ok(())
+    }
+
+    #[test]
     fn test_cache_zip_file() -> Result<()> {
         const ZIP_NAME: &str = "test_archive.zip";
 
@@ -442,7 +489,7 @@ mod tests {
         let file_path = sub_dir.join(ZIP_NAME);
         let buffer = vec![];
 
-        cache_zip_file(&mut sub_dir.to_owned(), ZIP_NAME, &buffer)?;
+        cache_zip_archive(&mut sub_dir.to_owned(), ZIP_NAME, &buffer)?;
 
         assert!(file_path.exists());
 
@@ -459,7 +506,7 @@ mod tests {
         let file_path = sub_dir.join(ZIP_NAME);
         let buffer = vec![];
 
-        cache_zip_file(&mut sub_dir.to_owned(), ZIP_NAME, &buffer)?;
+        cache_zip_archive(&mut sub_dir.to_owned(), ZIP_NAME, &buffer)?;
 
         assert!(file_path.exists());
 
