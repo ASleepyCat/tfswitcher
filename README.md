@@ -1,6 +1,9 @@
 # tfswitcher
 [`tfswitch`](https://github.com/warrensbox/terraform-switcher/)-like program but written in Rust.
 
+# Installation
+To install, simply run `cargo install tfswitcher`. There are also prebuilt binaries available with each release for Linux, macOS and Windows.
+
 # Motivations
 * Improved performance on WSL (if `$PATH` contains Windows directories)
 * Better code quality
