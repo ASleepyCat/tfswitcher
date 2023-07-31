@@ -2,6 +2,7 @@ use anyhow::{bail, Context, Ok, Result};
 use clap::Parser;
 use dialoguer::{theme::ColorfulTheme, Select};
 use regex::Regex;
+use reqwest::blocking::Response;
 use semver::{Version, VersionReq};
 use std::{
     env::consts,
@@ -29,6 +30,15 @@ struct Args {
 
     #[arg(long = "install", env = "TF_VERSION")]
     install_version: Option<String>,
+}
+
+fn get_http(url: &str) -> Result<Response> {
+    let response = reqwest::blocking::get(url)
+        .with_context(|| format!("failed to send HTTP request to {url}"))?
+        .error_for_status()
+        .with_context(|| format!("server returned error from {url}"))?;
+
+    Ok(response)
 }
 
 fn main() -> Result<()> {
@@ -77,9 +87,8 @@ fn get_version_to_install(args: Args) -> Result<Option<String>> {
 }
 
 fn get_terraform_versions(args: Args, url: &str) -> Result<Vec<String>> {
-    let response = reqwest::blocking::get(url)?.error_for_status()?;
-    let contents = response.text()?;
-
+    let response = get_http(url)?;
+    let contents = response.text().with_context(|| "failed to get Terraform versions")?;
     let versions = capture_terraform_versions(args, &contents);
 
     Ok(versions)
@@ -192,11 +201,8 @@ fn download_and_save_terraform_version_zip(
     let url = format!("{ARCHIVE_URL}/{version}/{zip_name}");
     println!("Downloading archive from {url}");
 
-    let response = reqwest::blocking::get(url)
-        .with_context(|| "failed to send HTTP request")?
-        .error_for_status()
-        .with_context(|| "failed to download archive")?;
-    let buffer = response
+    let response = get_http(&url)?;
+    let contents = response
         .bytes()
         .with_context(|| "failed to read HTTP response")?
         .to_vec();
@@ -205,14 +211,14 @@ fn download_and_save_terraform_version_zip(
         Some(mut path) => {
             path.push(DEFAULT_CACHE_LOCATION);
             println!("Caching archive to {path:?}");
-            if let Err(e) = cache_zip_file(&mut path, zip_name, &buffer) {
+            if let Err(e) = cache_zip_file(&mut path, zip_name, &contents) {
                 println!("Unable to cache archive: {e}");
             };
         }
         None => println!("Unable to cache archive: could not find home directory"),
     }
 
-    let cursor = Cursor::new(buffer);
+    let cursor = Cursor::new(contents);
     Ok(ZipArchive::new(cursor).with_context(|| "failed to read HTTP response as ZIP archive")?)
 }
 
