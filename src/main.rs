@@ -130,8 +130,8 @@ fn get_version_from_module(versions: &[String]) -> Result<Option<String>> {
 }
 
 fn get_version_from_user_prompt(versions: &[String]) -> Result<Option<String>> {
-    println!("Select a Terraform version to install");
     match Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Select a Terraform version to install")
         .items(versions)
         .default(0)
         .interact_opt()
