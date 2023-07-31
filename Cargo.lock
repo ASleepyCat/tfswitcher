@@ -1352,9 +1352,9 @@ checksum = "62808a5042487d591eaffdfc1b0cae0cf0e08b3c13df526dc306e7e2e9148ee3"
 
 [[package]]
 name = "tfconfig"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9b3fa7217c213c4c1e7eb86913923ed714567598308e06f516f0c29a4ecf5c8"
+checksum = "b7002cac0569188b580c484f68edfc12b8ea06e647682ddb72e2a1939fe82576"
 dependencies = [
  "hcl-rs",
  "tempdir",
