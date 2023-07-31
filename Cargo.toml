@@ -13,12 +13,14 @@ categories = ["command-line-utilities"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.72"
 clap = { version = "4.3.19", features = ["derive", "env"] }
 dialoguer = "0.10.4"
 home = "0.5.4"
+pathsearch = "0.2.0"
 regex = "1.8.1"
 reqwest = { version = "0.11.16", features = ["json", "blocking"] }
 semver = { version = "1.0.17", package = "tf-semver" }
 tempdir = "0.3.7"
-tfconfig = "0.2.0"
+tfconfig = "0.2.1"
 zip = "0.6.4"
