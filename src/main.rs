@@ -4,11 +4,11 @@ use regex::Regex;
 use reqwest::blocking::Response;
 use semver::{Version, VersionReq};
 use std::{
-    env::{self, consts},
+    env::consts,
     error::Error,
     fs::{self, File},
     io::{self, Cursor},
-    path::{PathBuf, Path},
+    path::{Path, PathBuf},
     str::FromStr,
 };
 use zip::ZipArchive;
@@ -32,21 +32,6 @@ struct Args {
     install_version: Option<String>,
 }
 
-fn find_program_path(program_name: &str) -> Option<PathBuf> {
-    if let Ok(path_var) = env::var("PATH") {
-        let separator = if cfg!(windows) { ';' } else { ':' };
-
-        for path in path_var.split(separator) {
-            let program_path = PathBuf::from(path).join(program_name);
-            if program_path.exists() {
-                return Some(program_path);
-            }
-        }
-    }
-
-    None
-}
-
 fn get_http(url: &str) -> Result<Response, Box<dyn Error>> {
     let response = reqwest::blocking::get(url)?;
     match response.error_for_status_ref() {
@@ -64,7 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     if let Some(version) = get_version_to_install(args)? {
-        install_version(program_path, &version)?;
+        install_version(&program_path, &version)?;
     } else {
         println!("No version to install");
     }
@@ -73,14 +58,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn find_terraform_program_path() -> Option<PathBuf> {
-    if let Some(path) = find_program_path(PROGRAM_NAME) {
+    if let Some(path) = pathsearch::find_executable_in_path(PROGRAM_NAME) {
         return Some(path);
     }
 
     match home::home_dir() {
         Some(mut path) => {
             path.push(format!("{DEFAULT_LOCATION}/{PROGRAM_NAME}"));
-            println!("Could not locate {PROGRAM_NAME}, installing to {path:?}\nMake sure to include the directory into your $PATH");
+            println!("Could not locate {PROGRAM_NAME}, installing to {path:?}\nMake sure to include the directory in your $PATH environment variable");
             Some(path)
         }
         None => None,
@@ -164,14 +149,14 @@ fn get_version_from_user_prompt(versions: &[String]) -> Result<Option<String>, B
     }
 }
 
-fn install_version(program_path: PathBuf, version: &str) -> Result<(), Box<dyn Error>> {
+fn install_version(program_path: &Path, version: &str) -> Result<(), Box<dyn Error>> {
     println!("Terraform {version} will be installed to {program_path:?}");
 
     let os = consts::OS;
     let arch = get_arch(consts::ARCH);
 
     let archive = get_terraform_version_zip(version, os, arch)?;
-    extract_zip_archive(&program_path, archive)
+    extract_zip_archive(program_path, archive)
 }
 
 fn get_arch(arch: &str) -> &str {
@@ -230,7 +215,11 @@ fn download_and_save_terraform_version_zip(
     Ok(ZipArchive::new(cursor)?)
 }
 
-fn cache_zip_file(cache_location: &mut PathBuf, zip_name: &str, buffer: &[u8]) -> Result<(), Box<dyn Error>> {
+fn cache_zip_file(
+    cache_location: &mut PathBuf,
+    zip_name: &str,
+    buffer: &[u8],
+) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(&cache_location)?;
     cache_location.push(zip_name);
     fs::write(cache_location, buffer)?;
@@ -239,7 +228,7 @@ fn cache_zip_file(cache_location: &mut PathBuf, zip_name: &str, buffer: &[u8]) -
 }
 
 fn extract_zip_archive(
-    program_path: &PathBuf,
+    program_path: &Path,
     mut archive: ZipArchive<Cursor<Vec<u8>>>,
 ) -> Result<(), Box<dyn Error>> {
     let mut file = archive.by_index(0)?;
@@ -257,7 +246,7 @@ fn extract_zip_archive(
 }
 
 #[cfg(unix)]
-fn create_output_file(program_path: &PathBuf) -> Result<File, Box<dyn Error>> {
+fn create_output_file(program_path: &Path) -> Result<File, Box<dyn Error>> {
     let file = File::create(program_path)?;
     let mut perms = file.metadata()?.permissions();
     perms.set_mode(0o755);
@@ -267,14 +256,14 @@ fn create_output_file(program_path: &PathBuf) -> Result<File, Box<dyn Error>> {
 }
 
 #[cfg(windows)]
-fn create_output_file(program_path: &PathBuf) -> Result<File, Box<dyn Error>> {
+fn create_output_file(program_path: &Path) -> Result<File, Box<dyn Error>> {
     Ok(File::create(program_path)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{io::Write, path::Path};
+    use std::{env, io::Write, path::Path};
     use tempdir::TempDir;
 
     const LINES: &str = r#"<html><head>
