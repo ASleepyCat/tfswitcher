@@ -14,7 +14,7 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.72"
-clap = { version = "4.3.19", features = ["derive", "env"] }
+clap = { version = "4.3.23", features = ["derive", "env"] }
 dialoguer = "0.10.4"
 home = "0.5.4"
 pathsearch = "0.2.0"
