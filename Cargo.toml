@@ -18,7 +18,7 @@ clap = { version = "4.3.19", features = ["derive", "env"] }
 dialoguer = "0.10.4"
 home = "0.5.4"
 pathsearch = "0.2.0"
-regex = "1.8.1"
+regex = "1.9.3"
 reqwest = { version = "0.11.16", features = ["json", "blocking"] }
 semver = { version = "1.0.17", package = "tf-semver" }
 tempdir = "0.3.7"
