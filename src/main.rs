@@ -81,7 +81,7 @@ fn get_version_to_install(args: Args) -> Result<Option<String>> {
     let versions = capture_terraform_versions(&args, &contents);
 
     if let Some(version_from_module) = get_version_from_module(&versions)? {
-        return Ok(Some(version_from_module));
+        return Ok(Some(version_from_module.to_owned()));
     }
 
     get_version_from_user_prompt(&versions)
@@ -96,29 +96,23 @@ fn get_terraform_versions(url: &str) -> Result<String> {
     Ok(contents)
 }
 
-fn capture_terraform_versions(args: &Args, contents: &str) -> Vec<String> {
-    let mut versions = vec![];
-
-    let lines: Vec<_> = contents.split('\n').collect();
-    // From https://github.com/warrensbox/terraform-switcher/blob/d7dfd1b44605b095937e94b981d24305b858ff8c/lib/list_versions.go#L28-L35
+fn capture_terraform_versions<'a>(args: &Args, contents: &'a str) -> Vec<&'a str> {
     let re = if args.list_all {
-        Regex::new(r#"/(\d+\.\d+\.\d+)(?:-[a-zA-Z0-9-]+)?/?""#).expect("Invalid regex")
+        Regex::new(r#"terraform_(?<version>(\d+\.\d+\.\d+)(?:-[a-zA-Z0-9-]+)?)"#)
+            .expect("Invalid regex")
     } else {
-        Regex::new(r#"/(\d+\.\d+\.\d+)/?""#).expect("Invalid regex")
+        Regex::new(r#"terraform_(?<version>\d+\.\d+\.\d+)<"#).expect("Invalid regex")
     };
-    let trim_matches: &[_] = &['/', '"'];
-    for text in lines {
-        if let Some(capture) = re.captures(text) {
-            if let Some(mat) = capture.get(0) {
-                versions.push(mat.as_str().trim_matches(trim_matches).to_string());
-            }
-        }
-    }
+
+    let versions = re
+        .captures_iter(contents)
+        .filter_map(|c| c.name("version").map(|v| v.as_str()))
+        .collect();
 
     versions
 }
 
-fn get_version_from_module(versions: &[String]) -> Result<Option<String>> {
+fn get_version_from_module<'a>(versions: &'a [&'a str]) -> Result<Option<&'a str>> {
     let module = tfconfig::load_module(Path::new("."), false)?;
     let version_constraint = match module.required_core.first() {
         Some(version) => version,
@@ -133,14 +127,14 @@ fn get_version_from_module(versions: &[String]) -> Result<Option<String>> {
         let v = Version::from_str(version)
             .with_context(|| format!("failed to parse version {version}"))?;
         if req.matches(&v) {
-            return Ok(Some(version.to_owned()));
+            return Ok(Some(version));
         }
     }
 
     Ok(None)
 }
 
-fn get_version_from_user_prompt(versions: &[String]) -> Result<Option<String>> {
+fn get_version_from_user_prompt(versions: &[&str]) -> Result<Option<String>> {
     match Select::with_theme(&ColorfulTheme::default())
         .with_prompt("Select a Terraform version to install")
         .items(versions)
@@ -289,81 +283,87 @@ fn create_output_file(program_path: &Path) -> Result<File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use html_to_string_macro::html;
+    use once_cell::sync::Lazy;
     use std::{env, io::Write, path::Path};
     use tempdir::TempDir;
 
-    const LINES: &str = r#"<html>
-    <head>
-        <title>Terraform Versions | HashiCorp Releases</title>
-    </head>
+    static LINES: Lazy<String> = Lazy::new(|| {
+        html!(
+        <html>
+            <head>
+                <title>"Terraform Versions | HashiCorp Releases"</title>
+            </head>
 
-    <body>
-        <ul>
-            <li>
-            <a href="../">../</a>
-            </li>
-            <li>
-            <a href="/terraform/1.3.0/">terraform_1.3.0</a>
-            </li>
-            <li>
-            <a href="/terraform/1.3.0-rc1/">terraform_1.3.0-rc1</a>
-            </li>
-            <li>
-            <a href="/terraform/1.3.0-beta1/">terraform_1.3.0-beta1</a>
-            </li>
-            <li>
-            <a href="/terraform/1.3.0-alpha20220608/">terraform_1.3.0-alpha20220608</a>
-            </li>
-            <li>
-            <a href="/terraform/1.2.0/">terraform_1.2.0</a>
-            </li>
-            <li>
-            <a href="/terraform/1.2.0-rc1/">terraform_1.2.0-rc1</a>
-            </li>
-            <li>
-            <a href="/terraform/1.2.0-beta1/">terraform_1.2.0-beta1</a>
-            </li>
-            <li>
-            <a href="/terraform/1.2.0-alpha20220413/">terraform_1.2.0-alpha20220413</a>
-            </li>
-            <li>
-            <a href="/terraform/1.2.0-alpha-20220328/">terraform_1.2.0-alpha-20220328</a>
-            </li>
-            <li>
-            <a href="/terraform/1.1.0/">terraform_1.1.0</a>
-            </li>
-            <li>
-            <a href="/terraform/1.1.0-rc1/">terraform_1.1.0-rc1</a>
-            </li>
-            <li>
-            <a href="/terraform/1.1.0-beta1/">terraform_1.1.0-beta1</a>
-            </li>
-            <li>
-            <a href="/terraform/1.1.0-alpha20211029/">terraform_1.1.0-alpha20211029</a>
-            </li>
-            <li>
-            <a href="/terraform/1.0.0/">terraform_1.0.0</a>
-            </li>
-            <li>
-            <a href="/terraform/0.15.0/">terraform_0.15.0</a>
-            </li>
-            <li>
-            <a href="/terraform/0.15.0-rc1/">terraform_0.15.0-rc1</a>
-            </li>
-            <li>
-            <a href="/terraform/0.15.0-beta1/">terraform_0.15.0-beta1</a>
-            </li>
-            <li>
-            <a href="/terraform/0.15.0-alpha20210107/">terraform_0.15.0-alpha20210107</a>
-            </li>
-        </ul>
-    </body>
-</html>"#;
+            <body>
+                <ul>
+                    <li>
+                    <a href="../">"../"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.3.0/">"terraform_1.3.0"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.3.0-rc1/">"terraform_1.3.0-rc1"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.3.0-beta1/">"terraform_1.3.0-beta1"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.3.0-alpha20220608/">"terraform_1.3.0-alpha20220608"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.2.0/">"terraform_1.2.0"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.2.0-rc1/">"terraform_1.2.0-rc1"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.2.0-beta1/">"terraform_1.2.0-beta1"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.2.0-alpha20220413/">"terraform_1.2.0-alpha20220413"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.2.0-alpha-20220328/">"terraform_1.2.0-alpha-20220328"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.1.0/">"terraform_1.1.0"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.1.0-rc1/">"terraform_1.1.0-rc1"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.1.0-beta1/">"terraform_1.1.0-beta1"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.1.0-alpha20211029/">"terraform_1.1.0-alpha20211029"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/1.0.0/">"terraform_1.0.0"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/0.15.0/">"terraform_0.15.0"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/0.15.0-rc1/">"terraform_0.15.0-rc1"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/0.15.0-beta1/">"terraform_0.15.0-beta1"</a>
+                    </li>
+                    <li>
+                    <a href="/terraform/0.15.0-alpha20210107/">"terraform_0.15.0-alpha20210107"</a>
+                    </li>
+                </ul>
+            </body>
+        </html>
+        )
+    });
 
     #[test]
     fn test_capture_terraform_versions() -> Result<()> {
         let expected_versions = vec!["1.3.0", "1.2.0", "1.1.0", "1.0.0", "0.15.0"];
-        let actual_versions = capture_terraform_versions(&Args::default(), LINES);
+        let actual_versions = capture_terraform_versions(&Args::default(), &LINES);
 
         assert_eq!(expected_versions, actual_versions);
 
@@ -396,7 +396,7 @@ mod tests {
             list_all: true,
             install_version: None,
         };
-        let actual_versions = capture_terraform_versions(&args, LINES);
+        let actual_versions = capture_terraform_versions(&args, &LINES);
 
         assert_eq!(expected_versions, actual_versions);
 
@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn test_get_version_from_module() -> Result<()> {
         const EXPECTED_VERSION: &str = "1.0.0";
-        let versions = vec![EXPECTED_VERSION.to_string()];
+        let versions = vec![EXPECTED_VERSION];
 
         let tmp_dir = TempDir::new("test_get_version_from_module")?;
         let file_path = tmp_dir.path().join("version.tf");
