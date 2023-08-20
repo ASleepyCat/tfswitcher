@@ -416,8 +416,7 @@ mod tests {
         env::set_current_dir(Path::new(&tmp_dir.path()))?;
 
         let actual_version = get_version_from_module(&versions)?;
-        assert!(actual_version.is_some());
-        assert_eq!(EXPECTED_VERSION, actual_version.unwrap());
+        assert_eq!(Some(EXPECTED_VERSION), actual_version);
 
         env::set_current_dir(current_dir)?;
         Ok(())
