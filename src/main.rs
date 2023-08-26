@@ -22,13 +22,13 @@ const DEFAULT_CACHE_LOCATION: &str = ".cache/tfswitcher";
 const PROGRAM_NAME: &str = "terraform";
 
 #[derive(Parser, Default, Debug)]
-#[command(version)]
-struct Args {
+#[command(version, about)]
+struct Cli {
     /// Include pre-release versions
-    #[arg(short, long = "list-all", default_value_t = false)]
+    #[arg(short, long)]
     list_all: bool,
 
-    #[arg(long = "install", env = "TF_VERSION")]
+    #[arg(short, long = "install", env = "TF_VERSION")]
     install_version: Option<String>,
 }
 
@@ -42,13 +42,13 @@ fn get_http(url: &str) -> Result<Response> {
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let cli = Cli::parse();
 
     let Some(program_path) = find_terraform_program_path() else {
         bail!("could not find path to install Terraform");
     };
 
-    if let Some(version) = get_version_to_install(args)? {
+    if let Some(version) = get_version_to_install(cli)? {
         install_version(&program_path, &version)?;
     } else {
         bail!("no version to install");
@@ -72,13 +72,13 @@ fn find_terraform_program_path() -> Option<PathBuf> {
     }
 }
 
-fn get_version_to_install(args: Args) -> Result<Option<String>> {
-    if let Some(version) = args.install_version {
+fn get_version_to_install(cli: Cli) -> Result<Option<String>> {
+    if let Some(version) = cli.install_version {
         return Ok(Some(version));
     }
 
     let contents = get_terraform_versions(ARCHIVE_URL)?;
-    let versions = capture_terraform_versions(&args, &contents);
+    let versions = capture_terraform_versions(&cli, &contents);
 
     if let Some(version_from_module) = get_version_from_module(&versions)? {
         return Ok(Some(version_from_module.to_owned()));
@@ -96,8 +96,8 @@ fn get_terraform_versions(url: &str) -> Result<String> {
     Ok(contents)
 }
 
-fn capture_terraform_versions<'a>(args: &Args, contents: &'a str) -> Vec<&'a str> {
-    let re = if args.list_all {
+fn capture_terraform_versions<'a>(cli: &Cli, contents: &'a str) -> Vec<&'a str> {
+    let re = if cli.list_all {
         Regex::new(r#"terraform_(?<version>(\d+\.\d+\.\d+)(?:-[a-zA-Z0-9-]+)?)"#)
             .expect("Invalid regex")
     } else {
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn test_capture_terraform_versions() -> Result<()> {
         let expected_versions = vec!["1.3.0", "1.2.0", "1.1.0", "1.0.0", "0.15.0"];
-        let actual_versions = capture_terraform_versions(&Args::default(), &LINES);
+        let actual_versions = capture_terraform_versions(&Cli::default(), &LINES);
 
         assert_eq!(expected_versions, actual_versions);
 
@@ -392,7 +392,7 @@ mod tests {
             "0.15.0-beta1",
             "0.15.0-alpha20210107",
         ];
-        let args = Args {
+        let args = Cli {
             list_all: true,
             install_version: None,
         };
