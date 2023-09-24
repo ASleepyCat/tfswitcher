@@ -4,6 +4,16 @@
 # Installation
 To install, simply run `cargo install tfswitcher`. There are also prebuilt binaries available with each release for Linux, macOS and Windows.
 
+# Usage
+To see available flags and arguments, run `tfswitcher -h` or `tfswitcher --help`.
+
+You can also use a configuration file to automatically set certain flags or arguments. Simply place a file called `.tfswitch.toml` either in your current working directory or in your `$HOME` directory.
+```
+bin = "/location/of/terraform/binary"
+list_all = false
+version = "1.0.0"
+```
+
 # Motivations
 * Improved performance on WSL (if `$PATH` contains Windows directories)
 * Better code quality
