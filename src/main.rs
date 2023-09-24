@@ -28,7 +28,7 @@ struct Cli {
     #[arg(short, long)]
     list_all: bool,
 
-    #[arg(short, long = "install", env = "TF_VERSION")]
+    #[arg(env = "TF_VERSION")]
     install_version: Option<String>,
 }
 
