@@ -166,7 +166,8 @@ fn capture_terraform_versions<'a>(args: &Args, contents: &'a str) -> Vec<&'a str
 }
 
 fn get_version_from_module<'a>(cwd: &Path, versions: &'a [&'a str]) -> Result<Option<&'a str>> {
-    let module = tfconfig::load_module(cwd, false).with_context(|| "failed to load terraform modules")?;
+    let module =
+        tfconfig::load_module(cwd, false).with_context(|| "failed to load terraform modules")?;
     let version_constraint = match module.required_core.first() {
         Some(version) => version,
         None => return Ok(None),
