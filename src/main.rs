@@ -4,6 +4,7 @@ use dialoguer::{theme::ColorfulTheme, Select};
 use regex::Regex;
 use reqwest::blocking::Response;
 use semver::{Version, VersionReq};
+use serde::{Deserialize, Serialize};
 use std::{
     env::consts,
     fs::{self, File},
@@ -17,18 +18,25 @@ use zip::ZipArchive;
 use std::os::unix::prelude::PermissionsExt;
 
 const ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
+const CONFIG_FILE_NAME: &str = ".tfswitch.toml";
 const DEFAULT_LOCATION: &str = ".local/bin";
 const DEFAULT_CACHE_LOCATION: &str = ".cache/tfswitcher";
 const PROGRAM_NAME: &str = "terraform";
 
-#[derive(Parser, Default, Debug)]
+#[derive(Parser, Default, Debug, Serialize, Deserialize, PartialEq)]
 #[command(version, about)]
-struct Cli {
+struct Args {
+    /// Location of terraform binary
+    #[arg(short, long = "bin")]
+    #[serde(rename = "bin")]
+    binary_location: Option<PathBuf>,
+
     /// Include pre-release versions
     #[arg(short, long)]
-    list_all: bool,
+    list_all: Option<bool>,
 
     #[arg(env = "TF_VERSION")]
+    #[serde(rename = "version")]
     install_version: Option<String>,
 }
 
@@ -42,22 +50,67 @@ fn get_http(url: &str) -> Result<Response> {
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let mut args = Args::parse();
+    parse_config_arguments(&mut args)?;
 
-    let Some(program_path) = find_terraform_program_path() else {
+    let Some(program_path) = find_terraform_program_path(&args) else {
         bail!("could not find path to install Terraform");
     };
 
-    if let Some(version) = get_version_to_install(cli)? {
-        install_version(&program_path, &version)?;
-    } else {
-        bail!("no version to install");
+    match get_version_to_install(args)? {
+        Some(version) => Ok(install_version(&program_path, &version)?),
+        None => bail!("no version to install"),
+    }
+}
+
+fn parse_config_arguments(args: &mut Args) -> Result<()> {
+    if let Some(config) = load_config_file(".".into(), home::home_dir())? {
+        if args.binary_location.is_none() {
+            args.binary_location = config.binary_location
+        }
+        if args.list_all.is_none() {
+            args.list_all = config.list_all
+        }
+        if args.install_version.is_none() {
+            args.install_version = config.install_version
+        }
     }
 
     Ok(())
 }
 
-fn find_terraform_program_path() -> Option<PathBuf> {
+fn load_config_file(mut cwd: PathBuf, mut home_dir: Option<PathBuf>) -> Result<Option<Args>> {
+    cwd.push(CONFIG_FILE_NAME);
+    if cwd.exists() {
+        let config = fs::read_to_string(&cwd)
+            .with_context(|| format!("failed to read config file in cwd at {:?}", cwd))?;
+        let toml_file = toml::from_str(&config)
+            .with_context(|| format!("failed to parse config in cwd at {cwd:?}"))?;
+        return Ok(Some(toml_file));
+    }
+
+    match home_dir.as_mut() {
+        Some(home) => {
+            home.push(CONFIG_FILE_NAME);
+            if !home.exists() {
+                return Ok(None);
+            }
+
+            let config = fs::read_to_string(&home)
+                .with_context(|| format!("failed to read config file in home at {home:?}"))?;
+            let toml_file = toml::from_str(&config)
+                .with_context(|| format!("failed to parse config in home at {home:?}"))?;
+            Ok(Some(toml_file))
+        }
+        None => Ok(None),
+    }
+}
+
+fn find_terraform_program_path(args: &Args) -> Option<PathBuf> {
+    if args.binary_location.is_some() {
+        return args.binary_location.clone();
+    }
+
     if let Some(path) = pathsearch::find_executable_in_path(PROGRAM_NAME) {
         return Some(path);
     }
@@ -72,15 +125,15 @@ fn find_terraform_program_path() -> Option<PathBuf> {
     }
 }
 
-fn get_version_to_install(cli: Cli) -> Result<Option<String>> {
-    if let Some(version) = cli.install_version {
-        return Ok(Some(version));
+fn get_version_to_install(args: Args) -> Result<Option<String>> {
+    if args.install_version.is_some() {
+        return Ok(args.install_version);
     }
 
     let contents = get_terraform_versions(ARCHIVE_URL)?;
-    let versions = capture_terraform_versions(&cli, &contents);
+    let versions = capture_terraform_versions(&args, &contents);
 
-    if let Some(version_from_module) = get_version_from_module(&versions)? {
+    if let Some(version_from_module) = get_version_from_module(Path::new("."), &versions)? {
         return Ok(Some(version_from_module.to_owned()));
     }
 
@@ -96,8 +149,8 @@ fn get_terraform_versions(url: &str) -> Result<String> {
     Ok(contents)
 }
 
-fn capture_terraform_versions<'a>(cli: &Cli, contents: &'a str) -> Vec<&'a str> {
-    let re = if cli.list_all {
+fn capture_terraform_versions<'a>(args: &Args, contents: &'a str) -> Vec<&'a str> {
+    let re = if args.list_all == Some(true) {
         Regex::new(r#"terraform_(?<version>(\d+\.\d+\.\d+)(?:-[a-zA-Z0-9-]+)?)"#)
             .expect("Invalid regex")
     } else {
@@ -112,8 +165,8 @@ fn capture_terraform_versions<'a>(cli: &Cli, contents: &'a str) -> Vec<&'a str> 
     versions
 }
 
-fn get_version_from_module<'a>(versions: &'a [&'a str]) -> Result<Option<&'a str>> {
-    let module = tfconfig::load_module(Path::new("."), false)?;
+fn get_version_from_module<'a>(cwd: &Path, versions: &'a [&'a str]) -> Result<Option<&'a str>> {
+    let module = tfconfig::load_module(cwd, false).with_context(|| "failed to load terraform modules")?;
     let version_constraint = match module.required_core.first() {
         Some(version) => version,
         None => return Ok(None),
@@ -285,7 +338,6 @@ mod tests {
     use super::*;
     use html_to_string_macro::html;
     use once_cell::sync::Lazy;
-    use std::{env, io::Write, path::Path};
     use tempdir::TempDir;
 
     static LINES: Lazy<String> = Lazy::new(|| {
@@ -361,9 +413,60 @@ mod tests {
     });
 
     #[test]
+    fn test_load_config_file_in_cwd() -> Result<()> {
+        let expected_config_file = Args {
+            binary_location: Some("test_load_config_file_in_cwd".into()),
+            list_all: Some(true),
+            install_version: Some("test_load_config_file_in_cwd".to_owned()),
+        };
+        let config_file = toml::to_string(&expected_config_file)?;
+
+        let tmp_dir = TempDir::new("test_load_config_file_in_cwd")?;
+        let tmp_dir_path = tmp_dir.path();
+        let file_path = tmp_dir_path.join(CONFIG_FILE_NAME);
+        fs::write(file_path, config_file)?;
+
+        let actual_config_file = load_config_file(tmp_dir_path.to_path_buf(), None)?;
+        assert_eq!(Some(expected_config_file), actual_config_file);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_config_file_in_home() -> Result<()> {
+        let expected_config_file = Args {
+            binary_location: Some("test_load_config_file_in_home".into()),
+            list_all: Some(true),
+            install_version: Some("test_load_config_file_in_home".to_owned()),
+        };
+        let config_file = toml::to_string(&expected_config_file)?;
+
+        let tmp_dir = TempDir::new("test_load_config_file_in_home")?;
+        let tmp_dir_path = tmp_dir.path();
+        let file_path = tmp_dir_path.join(CONFIG_FILE_NAME);
+        fs::write(file_path, config_file)?;
+
+        let actual_config_file = load_config_file(".".into(), Some(tmp_dir_path.to_path_buf()))?;
+        assert_eq!(Some(expected_config_file), actual_config_file);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_config_file_not_present() -> Result<()> {
+        let tmp_dir = TempDir::new("test_load_config_file_not_present")?;
+        let tmp_dir_path = tmp_dir.path();
+
+        let actual_config_file = load_config_file(".".into(), Some(tmp_dir_path.to_path_buf()))?;
+        assert!(actual_config_file.is_none());
+
+        Ok(())
+    }
+
+    #[test]
     fn test_capture_terraform_versions() -> Result<()> {
         let expected_versions = vec!["1.3.0", "1.2.0", "1.1.0", "1.0.0", "0.15.0"];
-        let actual_versions = capture_terraform_versions(&Cli::default(), &LINES);
+        let actual_versions = capture_terraform_versions(&Args::default(), &LINES);
 
         assert_eq!(expected_versions, actual_versions);
 
@@ -392,9 +495,9 @@ mod tests {
             "0.15.0-beta1",
             "0.15.0-alpha20210107",
         ];
-        let args = Cli {
-            list_all: true,
-            install_version: None,
+        let args = Args {
+            list_all: Some(true),
+            ..Default::default()
         };
         let actual_versions = capture_terraform_versions(&args, &LINES);
 
@@ -409,16 +512,13 @@ mod tests {
         let versions = vec![EXPECTED_VERSION];
 
         let tmp_dir = TempDir::new("test_get_version_from_module")?;
-        let file_path = tmp_dir.path().join("version.tf");
-        let mut file = File::create(file_path)?;
-        file.write_all(b"terraform { required_version = \"~>1.0.0\" }")?;
-        let current_dir = env::current_dir()?;
-        env::set_current_dir(Path::new(&tmp_dir.path()))?;
+        let tmp_dir_path = tmp_dir.path();
+        let file_path = tmp_dir_path.join("version.tf");
+        fs::write(file_path, b"terraform { required_version = \"~>1.0.0\" }")?;
 
-        let actual_version = get_version_from_module(&versions)?;
+        let actual_version = get_version_from_module(tmp_dir_path, &versions)?;
         assert_eq!(Some(EXPECTED_VERSION), actual_version);
 
-        env::set_current_dir(current_dir)?;
         Ok(())
     }
 
@@ -471,7 +571,7 @@ mod tests {
         let cache_dir = tmp_dir.path().join(DEFAULT_CACHE_LOCATION);
         let file_path = cache_dir.join(ZIP_NAME);
         fs::create_dir_all(cache_dir)?;
-        fs::write(file_path, "")?;
+        File::create(file_path)?;
 
         let file = get_cached_zip(Some(&mut tmp_dir.path().to_path_buf()), ZIP_NAME)?;
         assert!(file.is_some());
@@ -484,11 +584,11 @@ mod tests {
         const ZIP_NAME: &str = "test_archive.zip";
 
         let tmp_dir = TempDir::new("test_cache_zip_file")?;
-        let sub_dir = tmp_dir.path().join("tfswitcher");
+        let mut sub_dir = tmp_dir.path().join("tfswitcher");
         let file_path = sub_dir.join(ZIP_NAME);
         let buffer = vec![];
 
-        cache_zip_archive(&mut sub_dir.to_owned(), ZIP_NAME, &buffer)?;
+        cache_zip_archive(&mut sub_dir, ZIP_NAME, &buffer)?;
 
         assert!(file_path.exists());
 
@@ -500,12 +600,12 @@ mod tests {
         const ZIP_NAME: &str = "test_archive.zip";
 
         let tmp_dir = TempDir::new("test_cache_zip_file_dir_exists")?;
-        let sub_dir = tmp_dir.path().join("tfswitcher");
+        let mut sub_dir = tmp_dir.path().join("tfswitcher");
         fs::create_dir_all(&sub_dir)?;
         let file_path = sub_dir.join(ZIP_NAME);
         let buffer = vec![];
 
-        cache_zip_archive(&mut sub_dir.to_owned(), ZIP_NAME, &buffer)?;
+        cache_zip_archive(&mut sub_dir, ZIP_NAME, &buffer)?;
 
         assert!(file_path.exists());
 
