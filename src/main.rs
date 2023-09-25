@@ -33,6 +33,7 @@ struct Args {
 
     /// Include pre-release versions
     #[arg(short, long)]
+    #[serde(default)]
     list_all: bool,
 
     #[arg(env = "TF_VERSION")]
@@ -413,11 +414,7 @@ mod tests {
 
     #[test]
     fn test_parse_config_arguments_list_all_flag_disabled_from_cli() -> Result<()> {
-        let config_file = Args {
-            list_all: true,
-            ..Default::default()
-        };
-        let config_file = toml::to_string(&config_file)?;
+        let config_file = "list_all = true";
 
         let tmp_dir = TempDir::new("test_parse_config_arguments_list_all_flag_disabled_from_cli")?;
         let tmp_dir_path = tmp_dir.path();
@@ -433,13 +430,10 @@ mod tests {
 
     #[test]
     fn test_parse_config_arguments_list_all_flag_enabled_from_cli() -> Result<()> {
-        let config_file = Args::default();
-        let config_file = toml::to_string(&config_file)?;
-
         let tmp_dir = TempDir::new("test_parse_config_arguments_list_all_flag_enabled_from_cli")?;
         let tmp_dir_path = tmp_dir.path();
         let file_path = tmp_dir_path.join(CONFIG_FILE_NAME);
-        fs::write(file_path, config_file)?;
+        File::create(file_path)?;
 
         let mut args = Args {
             list_all: true,
@@ -458,7 +452,9 @@ mod tests {
             list_all: true,
             install_version: Some("test_load_config_file_in_cwd".to_owned()),
         };
-        let config_file = toml::to_string(&expected_config_file)?;
+        let config_file = r#"bin = "test_load_config_file_in_cwd"
+list_all = true
+version = "test_load_config_file_in_cwd""#;
 
         let tmp_dir = TempDir::new("test_load_config_file_in_cwd")?;
         let tmp_dir_path = tmp_dir.path();
@@ -478,7 +474,9 @@ mod tests {
             list_all: true,
             install_version: Some("test_load_config_file_in_home".to_owned()),
         };
-        let config_file = toml::to_string(&expected_config_file)?;
+        let config_file = r#"bin = "test_load_config_file_in_home"
+list_all = true
+version = "test_load_config_file_in_home""#;
 
         let tmp_dir = TempDir::new("test_load_config_file_in_home")?;
         let tmp_dir_path = tmp_dir.path();
@@ -553,7 +551,7 @@ mod tests {
         let tmp_dir = TempDir::new("test_get_version_from_module")?;
         let tmp_dir_path = tmp_dir.path();
         let file_path = tmp_dir_path.join("version.tf");
-        fs::write(file_path, b"terraform { required_version = \"~>1.0.0\" }")?;
+        fs::write(file_path, r#"terraform { required_version = "~>1.0.0" }"#)?;
 
         let actual_version = get_version_from_module(tmp_dir_path, &versions)?;
         assert_eq!(Some(EXPECTED_VERSION), actual_version);
