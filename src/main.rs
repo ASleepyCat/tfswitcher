@@ -33,7 +33,7 @@ struct Args {
 
     /// Include pre-release versions
     #[arg(short, long)]
-    list_all: Option<bool>,
+    list_all: bool,
 
     #[arg(env = "TF_VERSION")]
     #[serde(rename = "version")]
@@ -51,7 +51,7 @@ fn get_http(url: &str) -> Result<Response> {
 
 fn main() -> Result<()> {
     let mut args = Args::parse();
-    parse_config_arguments(&mut args)?;
+    parse_config_arguments(".".into(), &mut args)?;
 
     let Some(program_path) = find_terraform_program_path(&args) else {
         bail!("could not find path to install Terraform");
@@ -63,12 +63,12 @@ fn main() -> Result<()> {
     }
 }
 
-fn parse_config_arguments(args: &mut Args) -> Result<()> {
-    if let Some(config) = load_config_file(".".into(), home::home_dir())? {
+fn parse_config_arguments(cwd: PathBuf, args: &mut Args) -> Result<()> {
+    if let Some(config) = load_config_file(cwd, home::home_dir())? {
         if args.binary_location.is_none() {
             args.binary_location = config.binary_location
         }
-        if args.list_all.is_none() {
+        if !args.list_all {
             args.list_all = config.list_all
         }
         if args.install_version.is_none() {
@@ -150,7 +150,7 @@ fn get_terraform_versions(url: &str) -> Result<String> {
 }
 
 fn capture_terraform_versions<'a>(args: &Args, contents: &'a str) -> Vec<&'a str> {
-    let re = if args.list_all == Some(true) {
+    let re = if args.list_all {
         Regex::new(r#"terraform_(?<version>(\d+\.\d+\.\d+)(?:-[a-zA-Z0-9-]+)?)"#)
             .expect("Invalid regex")
     } else {
@@ -414,10 +414,50 @@ mod tests {
     });
 
     #[test]
+    fn test_parse_config_arguments_list_all_flag_disabled_from_cli() -> Result<()> {
+        let config_file = Args {
+            list_all: true,
+            ..Default::default()
+        };
+        let config_file = toml::to_string(&config_file)?;
+
+        let tmp_dir = TempDir::new("test_parse_config_arguments_list_all_flag_disabled_from_cli")?;
+        let tmp_dir_path = tmp_dir.path();
+        let file_path = tmp_dir_path.join(CONFIG_FILE_NAME);
+        fs::write(file_path, config_file)?;
+
+        let mut args = Args::default();
+        parse_config_arguments(tmp_dir_path.to_path_buf(), &mut args)?;
+        assert!(args.list_all);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_config_arguments_list_all_flag_enabled_from_cli() -> Result<()> {
+        let config_file = Args::default();
+        let config_file = toml::to_string(&config_file)?;
+
+        let tmp_dir = TempDir::new("test_parse_config_arguments_list_all_flag_enabled_from_cli")?;
+        let tmp_dir_path = tmp_dir.path();
+        let file_path = tmp_dir_path.join(CONFIG_FILE_NAME);
+        fs::write(file_path, config_file)?;
+
+        let mut args = Args {
+            list_all: true,
+            ..Default::default()
+        };
+        parse_config_arguments(tmp_dir_path.to_path_buf(), &mut args)?;
+        assert!(args.list_all);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_load_config_file_in_cwd() -> Result<()> {
         let expected_config_file = Args {
             binary_location: Some("test_load_config_file_in_cwd".into()),
-            list_all: Some(true),
+            list_all: true,
             install_version: Some("test_load_config_file_in_cwd".to_owned()),
         };
         let config_file = toml::to_string(&expected_config_file)?;
@@ -437,7 +477,7 @@ mod tests {
     fn test_load_config_file_in_home() -> Result<()> {
         let expected_config_file = Args {
             binary_location: Some("test_load_config_file_in_home".into()),
-            list_all: Some(true),
+            list_all: true,
             install_version: Some("test_load_config_file_in_home".to_owned()),
         };
         let config_file = toml::to_string(&expected_config_file)?;
@@ -497,7 +537,7 @@ mod tests {
             "0.15.0-alpha20210107",
         ];
         let args = Args {
-            list_all: Some(true),
+            list_all: true,
             ..Default::default()
         };
         let actual_versions = capture_terraform_versions(&args, &LINES);
