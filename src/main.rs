@@ -68,7 +68,7 @@ fn parse_config_arguments(cwd: PathBuf, args: &mut Args) -> Result<()> {
         if args.binary_location.is_none() {
             args.binary_location = config.binary_location
         }
-        args.list_all = args.list_all || config.list_all;
+        args.list_all |= config.list_all;
         if args.install_version.is_none() {
             args.install_version = config.install_version
         }
