@@ -28,6 +28,12 @@ For example, for Bash:
 tfswitcher -c bash >> ~/.local/share/bash-completion/completions/tfswitcher
 ```
 
+Alternatively, you can source the tab-completion script inside your shell's start up script:
+
+```bash
+echo "source <(tfswitcher -c bash)" >> ~/.bashrc
+```
+
 ## Motivations
 
 * Improved performance on WSL (if `$PATH` contains Windows directories)
