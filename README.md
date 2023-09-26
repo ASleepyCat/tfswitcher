@@ -18,6 +18,22 @@ list_all = false
 version = "1.0.0"
 ```
 
+## Shell Completions
+
+`tfswitcher` can generate tab-completion scripts for your desired shell. To see which shells are supported, see the `--help` text.
+
+For example, for Bash:
+
+```bash
+tfswitcher -c bash >> ~/.local/share/bash-completion/completions/tfswitcher
+```
+
+Alternatively, you can source the tab-completion script inside your shell's start up script:
+
+```bash
+echo "source <(tfswitcher -c bash)" >> ~/.bashrc
+```
+
 ## Motivations
 
 * Improved performance on WSL (if `$PATH` contains Windows directories)

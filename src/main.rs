@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Ok, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use dialoguer::{theme::ColorfulTheme, Select};
 use regex::Regex;
 use reqwest::blocking::Response;
@@ -39,6 +39,11 @@ struct Args {
     #[arg(env = "TF_VERSION")]
     #[serde(rename = "version")]
     install_version: Option<String>,
+
+    /// Generate tab-completion scripts for the specified shell
+    #[arg(short = 'c', long = "completions", id = "SHELL")]
+    #[serde(skip)]
+    generator: Option<clap_complete::Shell>,
 }
 
 fn get_http(url: &str) -> Result<Response> {
@@ -53,6 +58,16 @@ fn get_http(url: &str) -> Result<Response> {
 fn main() -> Result<()> {
     let mut args = Args::parse();
     parse_config_arguments(".".into(), &mut args)?;
+
+    if let Some(generator) = args.generator {
+        clap_complete::generate(
+            generator,
+            &mut Args::command_for_update(),
+            clap::crate_name!(),
+            &mut io::stdout(),
+        );
+        return Ok(());
+    }
 
     let Some(program_path) = find_terraform_program_path(&args) else {
         bail!("could not find path to install Terraform");
@@ -451,6 +466,7 @@ mod tests {
             binary_location: Some("test_load_config_file_in_cwd".into()),
             list_all: true,
             install_version: Some("test_load_config_file_in_cwd".to_owned()),
+            generator: None,
         };
         let config_file = r#"bin = "test_load_config_file_in_cwd"
 list_all = true
@@ -473,6 +489,7 @@ version = "test_load_config_file_in_cwd""#;
             binary_location: Some("test_load_config_file_in_home".into()),
             list_all: true,
             install_version: Some("test_load_config_file_in_home".to_owned()),
+            generator: None,
         };
         let config_file = r#"bin = "test_load_config_file_in_home"
 list_all = true
