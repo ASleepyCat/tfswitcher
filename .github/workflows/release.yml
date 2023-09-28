@@ -20,6 +20,11 @@ jobs:
             archive: zip
     steps:
       - uses: actions/checkout@v4
+      - run: |
+          cat <<EOF >> pre.sh
+          rustup update
+          EOF
+          chmod +x pre.sh
       - name: Compile and release
         uses: rust-build/rust-build.action@v1.4.3
         env:
@@ -27,6 +32,7 @@ jobs:
         with:
           RUSTTARGET: ${{ matrix.target }}
           ARCHIVE_TYPES: ${{ matrix.archive }}
+          PRE_BUILD: "pre.sh"
   publish:
     name: Publish
     runs-on: ubuntu-latest
