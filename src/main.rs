@@ -1,8 +1,9 @@
 use anyhow::{bail, Context, Ok, Result};
 use clap::{CommandFactory, Parser};
+use core::fmt;
 use dialoguer::{theme::ColorfulTheme, Select};
 use regex::Regex;
-use reqwest::blocking::Response;
+use reqwest::Response;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -21,7 +22,6 @@ const ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
 const CONFIG_FILE_NAME: &str = ".tfswitch.toml";
 const DEFAULT_LOCATION: &str = ".local/bin";
 const DEFAULT_CACHE_LOCATION: &str = ".cache/tfswitcher";
-const PROGRAM_NAME: &str = "terraform";
 
 #[derive(Parser, Default, Debug, Serialize, Deserialize, PartialEq)]
 #[command(version, about)]
@@ -36,6 +36,11 @@ struct Args {
     #[serde(default)]
     list_all: bool,
 
+    /// Install OpenTofu
+    #[arg(short, long)]
+    #[serde(default)]
+    opentofu: bool,
+
     #[arg(env = "TF_VERSION")]
     #[serde(rename = "version")]
     install_version: Option<String>,
@@ -46,8 +51,144 @@ struct Args {
     generator: Option<clap_complete::Shell>,
 }
 
-fn get_http(url: &str) -> Result<Response> {
-    let response = reqwest::blocking::get(url)
+#[derive(Debug)]
+enum ProgramName {
+    Terraform,
+    OpenTofu,
+}
+
+impl fmt::Display for ProgramName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProgramName::Terraform => write!(f, "terraform"),
+            ProgramName::OpenTofu => write!(f, "tofu"),
+        }
+    }
+}
+
+impl Args {
+    fn get_program_name(&self) -> ProgramName {
+        if self.opentofu {
+            return ProgramName::OpenTofu;
+        }
+        ProgramName::Terraform
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ReleaseInfo {
+    version: String,
+    url: String,
+    zip_name: String,
+}
+
+impl ReleaseInfo {
+    fn new(version: String, url: String, zip_name: String) -> ReleaseInfo {
+        ReleaseInfo {
+            version,
+            url,
+            zip_name,
+        }
+    }
+}
+
+trait ListVersions {
+    fn get_versions(&self) -> Vec<String>;
+}
+
+impl ListVersions for Vec<ReleaseInfo> {
+    fn get_versions(&self) -> Vec<String> {
+        self.iter().map(|r| r.version.to_owned()).collect()
+    }
+}
+
+enum Downloader {
+    Terraform,
+    OpenTofu,
+}
+
+impl Downloader {
+    async fn get_versions(&self, args: &Args) -> Result<Vec<ReleaseInfo>> {
+        match self {
+            Downloader::Terraform => Ok(get_versions_terraform(args).await?),
+            Downloader::OpenTofu => Ok(get_versions_opentofu(args).await?),
+        }
+    }
+}
+
+async fn get_versions_terraform(args: &Args) -> Result<Vec<ReleaseInfo>> {
+    let response = get_http(ARCHIVE_URL).await?;
+    let contents = response
+        .text()
+        .await
+        .with_context(|| "failed to get Terraform versions")?;
+
+    Ok(capture_terraform_versions(args, &contents))
+}
+
+fn capture_terraform_versions(args: &Args, contents: &str) -> Vec<ReleaseInfo> {
+    let re = if args.list_all {
+        Regex::new(r"terraform_(?<version>(\d+\.\d+\.\d+)(?:-[a-zA-Z0-9-]+)?)")
+            .expect("Invalid regex")
+    } else {
+        Regex::new(r"terraform_(?<version>\d+\.\d+\.\d+)<").expect("Invalid regex")
+    };
+
+    let target = get_target_platform();
+    let versions = re
+        .captures_iter(contents)
+        .filter_map(|c| {
+            c.name("version").map(|v| {
+                let version = v.as_str().to_owned();
+                let zip_name = format!("terraform_{version}_{target}.zip");
+                let url = format!("{ARCHIVE_URL}/{version}/{zip_name}");
+                ReleaseInfo::new(version, url, zip_name)
+            })
+        })
+        .collect();
+
+    versions
+}
+
+async fn get_versions_opentofu(args: &Args) -> Result<Vec<ReleaseInfo>> {
+    let releases = octocrab::instance()
+        .repos("opentofu", "opentofu")
+        .releases()
+        .list()
+        .send()
+        .await
+        .with_context(|| "failed to get releases from opentofu github repo")?;
+
+    let mut versions = vec![];
+    let target = get_target_platform();
+    for release in releases {
+        if release.prerelease && !args.list_all {
+            continue;
+        }
+
+        if let Some(asset) = release
+            .assets
+            .into_iter()
+            .find(|asset| asset.name.ends_with(format!("{target}.zip").as_str()))
+        {
+            let version = match release.tag_name.strip_prefix('v') {
+                Some(v) => v.to_owned(),
+                None => release.tag_name,
+            };
+            versions.push(ReleaseInfo::new(
+                version,
+                asset.browser_download_url.into(),
+                asset.name,
+            ));
+        }
+    }
+
+    Ok(versions)
+}
+
+async fn get_http(url: &str) -> Result<Response> {
+    let response = reqwest::get(url)
+        .await
         .with_context(|| format!("failed to send HTTP request to {url}"))?
         .error_for_status()
         .with_context(|| format!("server returned error from {url}"))?;
@@ -55,7 +196,8 @@ fn get_http(url: &str) -> Result<Response> {
     Ok(response)
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let mut args = Args::parse();
     parse_config_arguments(".".into(), &mut args)?;
 
@@ -70,11 +212,14 @@ fn main() -> Result<()> {
     }
 
     let Some(program_path) = find_terraform_program_path(&args) else {
-        bail!("could not find path to install Terraform");
+        bail!(format!(
+            "could not find path to install {:?}",
+            args.get_program_name()
+        ));
     };
 
-    match get_version_to_install(args)? {
-        Some(version) => Ok(install_version(&program_path, &version)?),
+    match get_version_to_install(&args).await? {
+        Some(version) => Ok(install_version(&args, &program_path, version).await?),
         None => bail!("no version to install"),
     }
 }
@@ -85,6 +230,7 @@ fn parse_config_arguments(cwd: PathBuf, args: &mut Args) -> Result<()> {
             args.binary_location = config.binary_location
         }
         args.list_all |= config.list_all;
+        args.opentofu |= config.opentofu;
         if args.install_version.is_none() {
             args.install_version = config.install_version
         }
@@ -125,61 +271,42 @@ fn find_terraform_program_path(args: &Args) -> Option<PathBuf> {
         return args.binary_location.clone();
     }
 
-    if let Some(path) = pathsearch::find_executable_in_path(PROGRAM_NAME) {
+    let program_name = args.get_program_name();
+
+    if let Some(path) = pathsearch::find_executable_in_path(&program_name.to_string()) {
         return Some(path);
     }
 
     match home::home_dir() {
         Some(mut path) => {
-            path.push(format!("{DEFAULT_LOCATION}/{PROGRAM_NAME}"));
-            println!("Could not locate {PROGRAM_NAME}, installing to {path:?}\nMake sure to include the directory in your $PATH environment variable");
+            path.push(format!("{DEFAULT_LOCATION}/{program_name}"));
+            println!("Could not locate {program_name:?}, installing to {path:?}\nMake sure to include the directory in your $PATH environment variable");
             Some(path)
         }
         None => None,
     }
 }
 
-fn get_version_to_install(args: Args) -> Result<Option<String>> {
-    if args.install_version.is_some() {
-        return Ok(args.install_version);
-    }
+async fn get_version_to_install(args: &Args) -> Result<Option<ReleaseInfo>> {
+    let downloader = if args.opentofu {
+        Downloader::OpenTofu
+    } else {
+        Downloader::Terraform
+    };
+    let versions = downloader.get_versions(args).await?;
 
-    let contents = get_terraform_versions(ARCHIVE_URL)?;
-    let versions = capture_terraform_versions(&args, &contents);
+    if let Some(version) = &args.install_version {
+        return Ok(versions.into_iter().find(|v| v.version.eq(version)));
+    }
 
     if let Some(version_from_module) = get_version_from_module(Path::new("."), &versions)? {
-        return Ok(Some(version_from_module.to_owned()));
+        return Ok(Some(version_from_module));
     }
 
-    get_version_from_user_prompt(&versions)
+    get_version_from_user_prompt(args.get_program_name(), &versions)
 }
 
-fn get_terraform_versions(url: &str) -> Result<String> {
-    let response = get_http(url)?;
-    let contents = response
-        .text()
-        .with_context(|| "failed to get Terraform versions")?;
-
-    Ok(contents)
-}
-
-fn capture_terraform_versions<'a>(args: &Args, contents: &'a str) -> Vec<&'a str> {
-    let re = if args.list_all {
-        Regex::new(r#"terraform_(?<version>(\d+\.\d+\.\d+)(?:-[a-zA-Z0-9-]+)?)"#)
-            .expect("Invalid regex")
-    } else {
-        Regex::new(r#"terraform_(?<version>\d+\.\d+\.\d+)<"#).expect("Invalid regex")
-    };
-
-    let versions = re
-        .captures_iter(contents)
-        .filter_map(|c| c.name("version").map(|v| v.as_str()))
-        .collect();
-
-    versions
-}
-
-fn get_version_from_module<'a>(cwd: &Path, versions: &'a [&'a str]) -> Result<Option<&'a str>> {
+fn get_version_from_module(cwd: &Path, versions: &Vec<ReleaseInfo>) -> Result<Option<ReleaseInfo>> {
     let module =
         tfconfig::load_module(cwd, false).with_context(|| "failed to load terraform modules")?;
     let version_constraint = match module.required_core.first() {
@@ -192,37 +319,57 @@ fn get_version_from_module<'a>(cwd: &Path, versions: &'a [&'a str]) -> Result<Op
     let req = VersionReq::parse(version_constraint)
         .with_context(|| format!("failed to parse version constraint {version_constraint}"))?;
     for version in versions {
-        let v = Version::from_str(version)
-            .with_context(|| format!("failed to parse version {version}"))?;
+        let v = Version::from_str(&version.version)
+            .with_context(|| format!("failed to parse version {}", version.version))?;
         if req.matches(&v) {
-            return Ok(Some(version));
+            return Ok(Some(version.clone()));
         }
     }
 
     Ok(None)
 }
 
-fn get_version_from_user_prompt(versions: &[&str]) -> Result<Option<String>> {
+fn get_version_from_user_prompt(
+    program_name: ProgramName,
+    versions: &Vec<ReleaseInfo>,
+) -> Result<Option<ReleaseInfo>> {
     match Select::with_theme(&ColorfulTheme::default())
-        .with_prompt("Select a Terraform version to install")
-        .items(versions)
+        .with_prompt(format!("Select a {program_name:?} version to install"))
+        .items(&versions.get_versions())
         .default(0)
         .interact_opt()
         .with_context(|| "failed to get version from user prompt")?
     {
-        Some(selection) => Ok(Some(versions[selection].to_owned())),
+        Some(selection) => Ok(versions.get(selection).cloned()),
         None => Ok(None),
     }
 }
 
-fn install_version(program_path: &Path, version: &str) -> Result<()> {
-    println!("Terraform {version} will be installed to {program_path:?}");
+async fn install_version(args: &Args, program_path: &Path, release: ReleaseInfo) -> Result<()> {
+    println!(
+        "{:?} {} will be installed to {program_path:?}",
+        args.get_program_name(),
+        release.version
+    );
 
+    let archive = get_zip(release).await?;
+    extract_zip_archive(args.get_program_name(), program_path, archive)
+}
+
+async fn get_zip(release: ReleaseInfo) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
+    if let Some(cursor) = get_cached_zip(home::home_dir().as_mut(), &release.zip_name)? {
+        let archive = ZipArchive::new(cursor).with_context(|| "failed to read cached archive")?;
+        return Ok(archive);
+    }
+
+    download_and_save_zip(release).await
+}
+
+fn get_target_platform() -> String {
     let os = consts::OS;
     let arch = get_arch(consts::ARCH);
 
-    let archive = get_terraform_version_zip(version, os, arch)?;
-    extract_zip_archive(program_path, archive)
+    format!("{os}_{arch}")
 }
 
 fn get_arch(arch: &str) -> &str {
@@ -232,21 +379,6 @@ fn get_arch(arch: &str) -> &str {
         "aarch64" => "arm64",
         _ => arch,
     }
-}
-
-fn get_terraform_version_zip(
-    version: &str,
-    os: &str,
-    arch: &str,
-) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
-    let zip_name = format!("terraform_{version}_{os}_{arch}.zip");
-
-    if let Some(cursor) = get_cached_zip(home::home_dir().as_mut(), &zip_name)? {
-        let archive = ZipArchive::new(cursor).with_context(|| "failed to read cached archive")?;
-        return Ok(archive);
-    }
-
-    download_and_save_terraform_version_zip(version, &zip_name)
 }
 
 fn get_cached_zip(
@@ -271,16 +403,13 @@ fn get_cached_zip(
     }
 }
 
-fn download_and_save_terraform_version_zip(
-    version: &str,
-    zip_name: &str,
-) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
-    let url = format!("{ARCHIVE_URL}/{version}/{zip_name}");
-    println!("Downloading archive from {url}");
+async fn download_and_save_zip(release: ReleaseInfo) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
+    println!("Downloading archive from {}", release.url);
 
-    let response = get_http(&url)?;
+    let response = get_http(&release.url).await?;
     let contents = response
         .bytes()
+        .await
         .with_context(|| "failed to read HTTP response")?
         .to_vec();
 
@@ -288,7 +417,7 @@ fn download_and_save_terraform_version_zip(
         Some(mut path) => {
             path.push(DEFAULT_CACHE_LOCATION);
             println!("Caching archive to {path:?}");
-            if let Err(e) = cache_zip_archive(&mut path, zip_name, &contents) {
+            if let Err(e) = cache_zip_archive(&mut path, &release.zip_name, &contents) {
                 println!("Unable to cache archive: {e}");
             };
         }
@@ -308,11 +437,12 @@ fn cache_zip_archive(cache_location: &mut PathBuf, zip_name: &str, buffer: &[u8]
 }
 
 fn extract_zip_archive(
+    program_name: ProgramName,
     program_path: &Path,
     mut archive: ZipArchive<Cursor<Vec<u8>>>,
 ) -> Result<()> {
     let mut file = archive
-        .by_index(0)
+        .by_name(&program_name.to_string())
         .with_context(|| "could not get item in archive")?;
     let file_name = file.name();
     println!("Extracting {file_name} to {program_path:?}");
@@ -428,10 +558,11 @@ mod tests {
     });
 
     #[test]
-    fn test_parse_config_arguments_list_all_flag_disabled_from_cli() -> Result<()> {
-        let config_file = "list_all = true";
+    fn test_parse_config_arguments_bool_flags_disabled_from_cli() -> Result<()> {
+        let config_file = r#"list_all = true
+opentofu = true"#;
 
-        let tmp_dir = TempDir::new("test_parse_config_arguments_list_all_flag_disabled_from_cli")?;
+        let tmp_dir = TempDir::new("test_parse_config_arguments_bool_flags_disabled_from_cli")?;
         let tmp_dir_path = tmp_dir.path();
         let file_path = tmp_dir_path.join(CONFIG_FILE_NAME);
         fs::write(file_path, config_file)?;
@@ -439,23 +570,26 @@ mod tests {
         let mut args = Args::default();
         parse_config_arguments(tmp_dir_path.to_path_buf(), &mut args)?;
         assert!(args.list_all);
+        assert!(args.opentofu);
 
         Ok(())
     }
 
     #[test]
-    fn test_parse_config_arguments_list_all_flag_enabled_from_cli() -> Result<()> {
-        let tmp_dir = TempDir::new("test_parse_config_arguments_list_all_flag_enabled_from_cli")?;
+    fn test_parse_config_arguments_bool_flags_enabled_from_cli() -> Result<()> {
+        let tmp_dir = TempDir::new("test_parse_config_arguments_bool_flags_enabled_from_cli")?;
         let tmp_dir_path = tmp_dir.path();
         let file_path = tmp_dir_path.join(CONFIG_FILE_NAME);
         File::create(file_path)?;
 
         let mut args = Args {
             list_all: true,
+            opentofu: true,
             ..Default::default()
         };
         parse_config_arguments(tmp_dir_path.to_path_buf(), &mut args)?;
         assert!(args.list_all);
+        assert!(args.opentofu);
 
         Ok(())
     }
@@ -465,11 +599,13 @@ mod tests {
         let expected_config_file = Args {
             binary_location: Some("test_load_config_file_in_cwd".into()),
             list_all: true,
+            opentofu: true,
             install_version: Some("test_load_config_file_in_cwd".to_owned()),
             generator: None,
         };
         let config_file = r#"bin = "test_load_config_file_in_cwd"
 list_all = true
+opentofu = true
 version = "test_load_config_file_in_cwd""#;
 
         let tmp_dir = TempDir::new("test_load_config_file_in_cwd")?;
@@ -488,11 +624,13 @@ version = "test_load_config_file_in_cwd""#;
         let expected_config_file = Args {
             binary_location: Some("test_load_config_file_in_home".into()),
             list_all: true,
+            opentofu: true,
             install_version: Some("test_load_config_file_in_home".to_owned()),
             generator: None,
         };
         let config_file = r#"bin = "test_load_config_file_in_home"
 list_all = true
+opentofu = true
 version = "test_load_config_file_in_home""#;
 
         let tmp_dir = TempDir::new("test_load_config_file_in_home")?;
@@ -519,7 +657,18 @@ version = "test_load_config_file_in_home""#;
 
     #[test]
     fn test_capture_terraform_versions() -> Result<()> {
-        let expected_versions = vec!["1.3.0", "1.2.0", "1.1.0", "1.0.0", "0.15.0"];
+        let target = get_target_platform();
+        let expected_versions: Vec<ReleaseInfo> =
+            vec!["1.3.0", "1.2.0", "1.1.0", "1.0.0", "0.15.0"]
+                .iter()
+                .map(|&v| {
+                    ReleaseInfo::new(
+                        v.into(),
+                        format!("{ARCHIVE_URL}/{v}/terraform_{v}_{target}.zip"),
+                        format!("terraform_{v}_{target}.zip"),
+                    )
+                })
+                .collect();
         let actual_versions = capture_terraform_versions(&Args::default(), &LINES);
 
         assert_eq!(expected_versions, actual_versions);
@@ -529,7 +678,8 @@ version = "test_load_config_file_in_home""#;
 
     #[test]
     fn test_capture_terraform_versions_list_all() -> Result<()> {
-        let expected_versions = vec![
+        let target = get_target_platform();
+        let expected_versions: Vec<ReleaseInfo> = vec![
             "1.3.0",
             "1.3.0-rc1",
             "1.3.0-beta1",
@@ -548,7 +698,16 @@ version = "test_load_config_file_in_home""#;
             "0.15.0-rc1",
             "0.15.0-beta1",
             "0.15.0-alpha20210107",
-        ];
+        ]
+        .iter()
+        .map(|&v| {
+            ReleaseInfo::new(
+                v.into(),
+                format!("{ARCHIVE_URL}/{v}/terraform_{v}_{target}.zip"),
+                format!("terraform_{v}_{target}.zip"),
+            )
+        })
+        .collect();
         let args = Args {
             list_all: true,
             ..Default::default()
@@ -562,8 +721,8 @@ version = "test_load_config_file_in_home""#;
 
     #[test]
     fn test_get_version_from_module() -> Result<()> {
-        const EXPECTED_VERSION: &str = "1.0.0";
-        let versions = vec![EXPECTED_VERSION];
+        let expected_release = ReleaseInfo::new("1.0.0".into(), "".to_string(), "".to_string());
+        let versions = vec![expected_release.clone()];
 
         let tmp_dir = TempDir::new("test_get_version_from_module")?;
         let tmp_dir_path = tmp_dir.path();
@@ -571,7 +730,7 @@ version = "test_load_config_file_in_home""#;
         fs::write(file_path, r#"terraform { required_version = "~>1.0.0" }"#)?;
 
         let actual_version = get_version_from_module(tmp_dir_path, &versions)?;
-        assert_eq!(Some(EXPECTED_VERSION), actual_version);
+        assert_eq!(Some(expected_release), actual_version);
 
         Ok(())
     }

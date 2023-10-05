@@ -15,6 +15,7 @@ You can also use a configuration file to automatically set certain flags or argu
 ```toml
 bin = "/location/of/terraform/binary"
 list_all = false
+opentofu = false
 version = "1.0.0"
 ```
 
