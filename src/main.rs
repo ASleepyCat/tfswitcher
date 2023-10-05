@@ -102,16 +102,16 @@ impl ListVersions for Vec<ReleaseInfo> {
     }
 }
 
-enum Downloader {
+enum VersionList {
     Terraform,
     OpenTofu,
 }
 
-impl Downloader {
+impl VersionList {
     async fn get_versions(&self, args: &Args) -> Result<Vec<ReleaseInfo>> {
         match self {
-            Downloader::Terraform => Ok(get_versions_terraform(args).await?),
-            Downloader::OpenTofu => Ok(get_versions_opentofu(args).await?),
+            VersionList::Terraform => Ok(get_versions_terraform(args).await?),
+            VersionList::OpenTofu => Ok(get_versions_opentofu(args).await?),
         }
     }
 }
@@ -288,12 +288,12 @@ fn find_terraform_program_path(args: &Args) -> Option<PathBuf> {
 }
 
 async fn get_version_to_install(args: &Args) -> Result<Option<ReleaseInfo>> {
-    let downloader = if args.opentofu {
-        Downloader::OpenTofu
+    let version_list = if args.opentofu {
+        VersionList::OpenTofu
     } else {
-        Downloader::Terraform
+        VersionList::Terraform
     };
-    let versions = downloader.get_versions(args).await?;
+    let versions = version_list.get_versions(args).await?;
 
     if let Some(version) = &args.install_version {
         return Ok(versions.into_iter().find(|v| v.version.eq(version)));
