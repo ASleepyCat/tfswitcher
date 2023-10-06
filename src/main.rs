@@ -18,7 +18,8 @@ use zip::ZipArchive;
 #[cfg(unix)]
 use std::os::unix::prelude::PermissionsExt;
 
-const ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
+const TERRAFORM_ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
+const OPENTOFU_ARCHIVE_URL: &str = "https://github.com/opentofu/opentofu/releases/download";
 const CONFIG_FILE_NAME: &str = ".tfswitch.toml";
 const DEFAULT_LOCATION: &str = ".local/bin";
 const DEFAULT_CACHE_LOCATION: &str = ".cache/tfswitcher";
@@ -117,7 +118,7 @@ impl VersionList {
 }
 
 async fn get_versions_terraform(args: &Args) -> Result<Vec<ReleaseInfo>> {
-    let response = get_http(ARCHIVE_URL).await?;
+    let response = get_http(TERRAFORM_ARCHIVE_URL).await?;
     let contents = response
         .text()
         .await
@@ -141,7 +142,7 @@ fn capture_terraform_versions(args: &Args, contents: &str) -> Vec<ReleaseInfo> {
             c.name("version").map(|v| {
                 let version = v.as_str().to_owned();
                 let zip_name = format!("terraform_{version}_{target}.zip");
-                let url = format!("{ARCHIVE_URL}/{version}/{zip_name}");
+                let url = format!("{TERRAFORM_ARCHIVE_URL}/{version}/{zip_name}");
                 ReleaseInfo::new(version, url, zip_name)
             })
         })
@@ -166,21 +167,14 @@ async fn get_versions_opentofu(args: &Args) -> Result<Vec<ReleaseInfo>> {
             continue;
         }
 
-        if let Some(asset) = release
-            .assets
-            .into_iter()
-            .find(|asset| asset.name.ends_with(format!("{target}.zip").as_str()))
-        {
-            let version = match release.tag_name.strip_prefix('v') {
-                Some(v) => v.to_owned(),
-                None => release.tag_name,
-            };
-            versions.push(ReleaseInfo::new(
-                version,
-                asset.browser_download_url.into(),
-                asset.name,
-            ));
-        }
+        let version = match release.tag_name.strip_prefix('v') {
+            Some(v) => v.to_owned(),
+            None => release.tag_name.clone(),
+        };
+        let zip_name = format!("{}_{version}_{target}.zip", ProgramName::OpenTofu);
+        let browser_download_url =
+            format!("{OPENTOFU_ARCHIVE_URL}/{}/{zip_name}", release.tag_name);
+        versions.push(ReleaseInfo::new(version, browser_download_url, zip_name));
     }
 
     Ok(versions)
@@ -664,7 +658,7 @@ version = "test_load_config_file_in_home""#;
                 .map(|&v| {
                     ReleaseInfo::new(
                         v.into(),
-                        format!("{ARCHIVE_URL}/{v}/terraform_{v}_{target}.zip"),
+                        format!("{TERRAFORM_ARCHIVE_URL}/{v}/terraform_{v}_{target}.zip"),
                         format!("terraform_{v}_{target}.zip"),
                     )
                 })
@@ -703,7 +697,7 @@ version = "test_load_config_file_in_home""#;
         .map(|&v| {
             ReleaseInfo::new(
                 v.into(),
-                format!("{ARCHIVE_URL}/{v}/terraform_{v}_{target}.zip"),
+                format!("{TERRAFORM_ARCHIVE_URL}/{v}/terraform_{v}_{target}.zip"),
                 format!("terraform_{v}_{target}.zip"),
             )
         })
