@@ -27,5 +27,5 @@ semver = { version = "1.0.17", package = "tf-semver" }
 serde = { version = "1.0.188", features = ["derive"] }
 tempdir = "0.3.7"
 tfconfig = "0.2.2"
-toml = "0.8.1"
+toml = "0.8.2"
 zip = "0.6.4"
