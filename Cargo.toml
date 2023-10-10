@@ -7,7 +7,7 @@ license = "MIT"
 description = "A Terraform and OpenTofu version switcher"
 readme = "README.md"
 repository = "https://github.com/ASleepyCat/tfswitcher"
-keywords = ["cli", "terraform", "opentofu", "tofu", "tfswitcher", "tfswitch"]
+keywords = ["cli", "terraform", "opentofu", "tfswitcher", "tfswitch"]
 categories = ["command-line-utilities"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
