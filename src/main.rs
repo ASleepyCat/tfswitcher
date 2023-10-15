@@ -367,19 +367,23 @@ async fn get_zip(release: &ReleaseInfo) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
     download_and_save_zip(release).await
 }
 
-fn get_target_platform() -> String {
-    let os = consts::OS;
-    let arch = get_arch(consts::ARCH);
-
-    format!("{os}_{arch}")
-}
-
-fn get_arch(arch: &str) -> &str {
-    match arch {
-        "x86" => "386",
-        "x86_64" => "amd64",
-        "aarch64" => "arm64",
-        _ => arch,
+/// Creates appropriate platform archive suffix.
+///
+/// Converts Rust constants `OS` and `ARCH` to equivalent Go runtime package `GOOS` and `GOARCH`.
+/// https://docs.rs/rustc-std-workspace-std/latest/std/env/consts/constant.ARCH.html
+/// https://docs.rs/rustc-std-workspace-std/latest/std/env/consts/constant.OS.html
+/// https://pkg.go.dev/runtime#pkg-constants
+fn get_target_platform() -> &'static str {
+    match (consts::OS, consts::ARCH) {
+        ("macos", "x86_64") => "darwin_amd64",
+        ("macos", "aarch64") => "darwin_arm64",
+        ("linux", "x86") => "linux_386",
+        ("linux", "x86_64") => "linux_amd64",
+        ("linux", "arm") => "linux_arm",
+        ("linux", "aarch64") => "linux_arm64",
+        ("windows", "x86") => "windows_386",
+        ("windows", "x86_64") => "windows_amd64",
+        _ => panic!("Unsupported platform"),
     }
 }
 
