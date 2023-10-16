@@ -367,19 +367,29 @@ async fn get_zip(release: &ReleaseInfo) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
     download_and_save_zip(release).await
 }
 
-fn get_target_platform() -> String {
-    let os = consts::OS;
-    let arch = get_arch(consts::ARCH);
-
-    format!("{os}_{arch}")
-}
-
-fn get_arch(arch: &str) -> &str {
-    match arch {
-        "x86" => "386",
-        "x86_64" => "amd64",
-        "aarch64" => "arm64",
-        _ => arch,
+/// Creates appropriate platform archive suffix.
+///
+/// Converts Rust constants `OS` and `ARCH` to equivalent Go runtime package `GOOS` and `GOARCH`.
+/// https://docs.rs/rustc-std-workspace-std/latest/std/env/consts/constant.ARCH.html
+/// https://docs.rs/rustc-std-workspace-std/latest/std/env/consts/constant.OS.html
+/// https://pkg.go.dev/runtime#pkg-constants
+fn get_target_platform() -> &'static str {
+    match (consts::OS, consts::ARCH) {
+        ("freebsd", "arm") => "freebsd_arm",
+        ("freebsd", "x86") => "freebsd_386",
+        ("freebsd", "x86_64") => "freebsd_amd64",
+        ("linux", "aarch64") => "linux_arm64",
+        ("linux", "arm") => "linux_arm",
+        ("linux", "x86") => "linux_386",
+        ("linux", "x86_64") => "linux_amd64",
+        ("macos", "aarch64") => "darwin_arm64",
+        ("macos", "x86_64") => "darwin_amd64",
+        ("openbsd", "x86") => "openbsd_386",
+        ("openbsd", "x86_64") => "openbsd_amd64",
+        ("solaris", "x86_64") => "solaris_amd64",
+        ("windows", "x86") => "windows_386",
+        ("windows", "x86_64") => "windows_amd64",
+        _ => panic!("Unsupported platform"),
     }
 }
 
@@ -723,26 +733,6 @@ version = "test_load_config_file_in_home""#;
         Ok(())
     }
 
-    #[test]
-    fn test_get_arch_x86() {
-        let expected_arch = "386";
-        let actual_arch = get_arch("x86");
-        assert_eq!(expected_arch, actual_arch);
-    }
-
-    #[test]
-    fn test_get_arch_x64_64() {
-        let expected_arch = "amd64";
-        let actual_arch = get_arch("x86_64");
-        assert_eq!(expected_arch, actual_arch);
-    }
-
-    #[test]
-    fn test_get_arch_aarch64() {
-        let expected_arch = "arm64";
-        let actual_arch = get_arch("aarch64");
-        assert_eq!(expected_arch, actual_arch);
-    }
 
     #[test]
     fn test_get_cached_zip_not_exists() -> Result<()> {
