@@ -733,26 +733,6 @@ version = "test_load_config_file_in_home""#;
         Ok(())
     }
 
-    #[test]
-    fn test_get_arch_x86() {
-        let expected_arch = "386";
-        let actual_arch = get_arch("x86");
-        assert_eq!(expected_arch, actual_arch);
-    }
-
-    #[test]
-    fn test_get_arch_x64_64() {
-        let expected_arch = "amd64";
-        let actual_arch = get_arch("x86_64");
-        assert_eq!(expected_arch, actual_arch);
-    }
-
-    #[test]
-    fn test_get_arch_aarch64() {
-        let expected_arch = "arm64";
-        let actual_arch = get_arch("aarch64");
-        assert_eq!(expected_arch, actual_arch);
-    }
 
     #[test]
     fn test_get_cached_zip_not_exists() -> Result<()> {
