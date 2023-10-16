@@ -375,12 +375,18 @@ async fn get_zip(release: &ReleaseInfo) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
 /// https://pkg.go.dev/runtime#pkg-constants
 fn get_target_platform() -> &'static str {
     match (consts::OS, consts::ARCH) {
-        ("macos", "x86_64") => "darwin_amd64",
-        ("macos", "aarch64") => "darwin_arm64",
+        ("freebsd", "arm") => "freebsd_arm",
+        ("freebsd", "x86") => "freebsd_386",
+        ("freebsd", "x86_64") => "freebsd_amd64",
+        ("linux", "aarch64") => "linux_arm64",
+        ("linux", "arm") => "linux_arm",
         ("linux", "x86") => "linux_386",
         ("linux", "x86_64") => "linux_amd64",
-        ("linux", "arm") => "linux_arm",
-        ("linux", "aarch64") => "linux_arm64",
+        ("macos", "aarch64") => "darwin_arm64",
+        ("macos", "x86_64") => "darwin_amd64",
+        ("openbsd", "x86") => "openbsd_386",
+        ("openbsd", "x86_64") => "openbsd_amd64",
+        ("solaris", "x86_64") => "solaris_amd64",
         ("windows", "x86") => "windows_386",
         ("windows", "x86_64") => "windows_amd64",
         _ => panic!("Unsupported platform"),
