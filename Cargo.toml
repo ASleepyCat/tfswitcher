@@ -15,7 +15,7 @@ categories = ["command-line-utilities"]
 [dependencies]
 anyhow = "1.0.72"
 clap = { version = "4.4.7", features = ["cargo", "derive", "env"] }
-clap_complete = "4.4.3"
+clap_complete = "4.4.4"
 dialoguer = "0.11.0"
 home = "0.5.4"
 html-to-string-macro = "0.2.5"
