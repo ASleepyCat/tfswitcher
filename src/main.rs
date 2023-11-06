@@ -335,8 +335,12 @@ fn get_version_from_user_prompt(
     program_name: ProgramName,
     versions: &Vec<ReleaseInfo>,
 ) -> Result<Option<ReleaseInfo>> {
+    let prompt = match program_name {
+        ProgramName::Terraform => format!("Select a {program_name:?} version to install"),
+        ProgramName::OpenTofu => format!("Select an {program_name:?} version to install"),
+    };
     match Select::with_theme(&ColorfulTheme::default())
-        .with_prompt(format!("Select a {program_name:?} version to install"))
+        .with_prompt(prompt)
         .items(&versions.get_versions())
         .default(0)
         .interact_opt()
