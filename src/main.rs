@@ -2,11 +2,14 @@ use anyhow::{bail, Context, Ok, Result};
 use clap::{CommandFactory, Parser};
 use core::fmt;
 use dialoguer::{theme::ColorfulTheme, Select};
+use futures_util::stream::StreamExt;
+use indicatif::ProgressBar;
 use regex::Regex;
 use reqwest::Response;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::{
+    cmp,
     env::consts,
     fs::{self, File},
     io::{self, Cursor},
@@ -420,14 +423,7 @@ fn get_cached_zip(
 }
 
 async fn download_and_save_zip(release: &ReleaseInfo) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
-    let url = release.get_download_url();
-    println!("Downloading archive from {url}");
-    let response = get_http(&url).await?;
-    let contents = response
-        .bytes()
-        .await
-        .with_context(|| "failed to read HTTP response")?
-        .to_vec();
+    let contents = download_zip(release).await?;
 
     match home::home_dir() {
         Some(mut path) => {
@@ -442,6 +438,38 @@ async fn download_and_save_zip(release: &ReleaseInfo) -> Result<ZipArchive<Curso
 
     let cursor = Cursor::new(contents);
     Ok(ZipArchive::new(cursor).with_context(|| "failed to read HTTP response as ZIP archive")?)
+}
+
+async fn download_zip(release: &ReleaseInfo) -> Result<Vec<u8>> {
+    let url = release.get_download_url();
+    println!("Downloading archive from {url}");
+    let response = get_http(&url).await?;
+
+    let mut contents = vec![];
+    if let Some(total_size) = response.content_length() {
+        let pb = ProgressBar::new(total_size);
+        let mut downloaded = 0;
+        let mut stream = response.bytes_stream();
+
+        while let Some(item) = stream.next().await {
+            let chunk = item.with_context(|| "failed to download chunk")?;
+            contents.append(&mut chunk.to_vec());
+
+            let new = cmp::min(downloaded + (chunk.len() as u64), total_size);
+            downloaded = new;
+            pb.set_position(new);
+        }
+
+        pb.finish_and_clear();
+    } else {
+        contents = response
+            .bytes()
+            .await
+            .with_context(|| "failed to read HTTP response")?
+            .to_vec();
+    }
+
+    Ok(contents)
 }
 
 fn cache_zip_archive(cache_location: &mut PathBuf, zip_name: &str, buffer: &[u8]) -> Result<()> {
@@ -736,7 +764,6 @@ version = "test_load_config_file_in_home""#;
 
         Ok(())
     }
-
 
     #[test]
     fn test_get_cached_zip_not_exists() -> Result<()> {
