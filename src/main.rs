@@ -236,6 +236,10 @@ fn parse_config_arguments(cwd: PathBuf, args: &mut Args) -> Result<()> {
         }
     }
 
+    if let Some(binary_location) = args.binary_location.as_ref() {
+        args.binary_location = Some(shellexpand::path::full(binary_location)?.into());
+    }
+
     Ok(())
 }
 
@@ -527,6 +531,7 @@ mod tests {
     use super::*;
     use html_to_string_macro::html;
     use once_cell::sync::Lazy;
+    use std::env;
     use tempdir::TempDir;
 
     static LINES: Lazy<String> = Lazy::new(|| {
@@ -634,6 +639,24 @@ opentofu = true"#;
         parse_config_arguments(tmp_dir_path.to_path_buf(), &mut args)?;
         assert!(args.list_all);
         assert!(args.opentofu);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_config_arguments_path_with_env_var() -> Result<()> {
+        const EXPECTED_PATH: &str = "path/htap";
+
+        env::set_var("A", "path");
+
+        let mut args = Args {
+            binary_location: Some("$A/htap".into()),
+            ..Default::default()
+        };
+
+        parse_config_arguments("".into(), &mut args)?;
+
+        assert_eq!(Some(EXPECTED_PATH.into()), args.binary_location);
 
         Ok(())
     }
