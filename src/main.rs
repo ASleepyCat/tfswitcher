@@ -507,8 +507,12 @@ fn extract_zip_archive(
 
 #[cfg(unix)]
 fn create_output_file(program_path: &Path) -> Result<File> {
+    if let Some(parent) = program_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let file = File::create(program_path)
         .with_context(|| format!("failed to create file at {program_path:?}"))?;
+
     let mut perms = file
         .metadata()
         .with_context(|| "could not get file metadata")?
@@ -522,6 +526,9 @@ fn create_output_file(program_path: &Path) -> Result<File> {
 
 #[cfg(windows)]
 fn create_output_file(program_path: &Path) -> Result<File> {
+    if let Some(parent) = program_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     Ok(File::create(program_path)
         .with_context(|| format!("failed to create file at {program_path:?}"))?)
 }
@@ -853,6 +860,16 @@ version = "test_load_config_file_in_home""#;
         cache_zip_archive(&mut sub_dir, ZIP_NAME, &buffer)?;
 
         assert!(file_path.exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_output_file() -> Result<()> {
+        let tmp_dir = TempDir::new("test_create_output_file")?;
+        let path = tmp_dir.path().join("subdir/tfswitcher");
+
+        create_output_file(&path)?;
 
         Ok(())
     }
