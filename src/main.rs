@@ -903,6 +903,7 @@ version = "test_load_config_file_in_home""#;
         Ok(())
     }
 
+    /// Equivalent test for Windows doesn't exist due to symlink creation being a privileged action
     #[cfg(unix)]
     #[test]
     fn test_remove_file_symlink() -> Result<()> {
@@ -911,27 +912,6 @@ version = "test_load_config_file_in_home""#;
         let path = tmp_dir.path().join("terraform");
         File::create(&path)?;
         std::os::unix::fs::symlink(&path, &symlink)?;
-        let args = Args {
-            force_remove: true,
-            ..Default::default()
-        };
-
-        remove_file(&args, &symlink)?;
-
-        assert!(path.exists());
-        assert!(!symlink.exists());
-
-        Ok(())
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn test_remove_file_symlink() -> Result<()> {
-        let tmp_dir = TempDir::new("test_remove_file_symlink")?;
-        let symlink = tmp_dir.path().join("symlink");
-        let path = tmp_dir.path().join("terraform");
-        File::create(&path)?;
-        junction::create(&path, &symlink)?;
         let args = Args {
             force_remove: true,
             ..Default::default()
