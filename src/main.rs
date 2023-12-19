@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     cmp,
     env::consts,
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{self, Cursor},
     path::{Path, PathBuf},
     str::FromStr,
@@ -523,21 +523,22 @@ fn extract_zip_archive(
 
 #[cfg(unix)]
 fn create_output_file(program_path: &Path) -> Result<File> {
-    use std::os::unix::prelude::PermissionsExt;
+    use std::os::unix::fs::OpenOptionsExt;
 
     if let Some(parent) = program_path.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create missing parent directories to {program_path:?}")
+        })?;
     }
-    let file = File::create(program_path)
-        .with_context(|| format!("failed to create file at {program_path:?}"))?;
 
-    let mut perms = file
-        .metadata()
-        .with_context(|| "could not get file metadata")?
-        .permissions();
-    perms.set_mode(0o755);
-    file.set_permissions(perms)
-        .with_context(|| "could not set file permissions")?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .mode(0o777)
+        .open(program_path)
+        .with_context(|| format!("failed to create file at {program_path:?}"))?;
 
     Ok(file)
 }
