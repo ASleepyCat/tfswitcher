@@ -42,7 +42,7 @@ struct Args {
     #[serde(default)]
     opentofu: bool,
 
-    /// Remove file at bin before extracting archive
+    /// Remove file at install location before extracting archive.
     /// Removes symlinks but does not follow them
     #[arg(short = 'F', long)]
     #[serde(default)]
