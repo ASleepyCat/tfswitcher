@@ -18,9 +18,6 @@ use std::{
 };
 use zip::ZipArchive;
 
-#[cfg(unix)]
-use std::os::unix::prelude::PermissionsExt;
-
 const TERRAFORM_ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
 const OPENTOFU_ARCHIVE_URL: &str = "https://github.com/opentofu/opentofu/releases/download";
 const CONFIG_FILE_NAME: &str = ".tfswitch.toml";
@@ -44,6 +41,12 @@ struct Args {
     #[arg(short, long)]
     #[serde(default)]
     opentofu: bool,
+
+    /// Remove file at install location before extracting archive.
+    /// Removes symlinks but does not follow them
+    #[arg(short = 'F', long)]
+    #[serde(default)]
+    force_remove: bool,
 
     #[arg(env = "TF_VERSION")]
     #[serde(rename = "version")]
@@ -231,6 +234,7 @@ fn parse_config_arguments(cwd: PathBuf, args: &mut Args) -> Result<()> {
         }
         args.list_all |= config.list_all;
         args.opentofu |= config.opentofu;
+        args.force_remove |= config.force_remove;
         if args.install_version.is_none() {
             args.install_version = config.install_version
         }
@@ -366,6 +370,7 @@ async fn install_version(args: &Args, program_path: &Path, release: ReleaseInfo)
     );
 
     let archive = get_zip(&release).await?;
+    remove_file(args, program_path)?;
     extract_zip_archive(args.get_program_name(), program_path, archive)
 }
 
@@ -484,6 +489,17 @@ fn cache_zip_archive(cache_location: &mut PathBuf, zip_name: &str, buffer: &[u8]
     Ok(())
 }
 
+fn remove_file(args: &Args, program_path: &Path) -> Result<()> {
+    if !args.force_remove {
+        return Ok(());
+    }
+
+    println!("Removing binary at {program_path:?}");
+    fs::remove_file(program_path)?;
+
+    Ok(())
+}
+
 fn extract_zip_archive(
     program_name: ProgramName,
     program_path: &Path,
@@ -507,6 +523,8 @@ fn extract_zip_archive(
 
 #[cfg(unix)]
 fn create_output_file(program_path: &Path) -> Result<File> {
+    use std::os::unix::prelude::PermissionsExt;
+
     if let Some(parent) = program_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -674,12 +692,14 @@ opentofu = true"#;
             binary_location: Some("test_load_config_file_in_cwd".into()),
             list_all: true,
             opentofu: true,
+            force_remove: true,
             install_version: Some("test_load_config_file_in_cwd".to_owned()),
             generator: None,
         };
         let config_file = r#"bin = "test_load_config_file_in_cwd"
 list_all = true
 opentofu = true
+force_remove = true
 version = "test_load_config_file_in_cwd""#;
 
         let tmp_dir = TempDir::new("test_load_config_file_in_cwd")?;
@@ -699,12 +719,14 @@ version = "test_load_config_file_in_cwd""#;
             binary_location: Some("test_load_config_file_in_home".into()),
             list_all: true,
             opentofu: true,
+            force_remove: true,
             install_version: Some("test_load_config_file_in_home".to_owned()),
             generator: None,
         };
         let config_file = r#"bin = "test_load_config_file_in_home"
 list_all = true
 opentofu = true
+force_remove = true
 version = "test_load_config_file_in_home""#;
 
         let tmp_dir = TempDir::new("test_load_config_file_in_home")?;
@@ -860,6 +882,45 @@ version = "test_load_config_file_in_home""#;
         cache_zip_archive(&mut sub_dir, ZIP_NAME, &buffer)?;
 
         assert!(file_path.exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_file() -> Result<()> {
+        let tmp_dir = TempDir::new("test_remove_file")?;
+        let path = tmp_dir.path().join("terraform");
+        File::create(&path)?;
+        let args = Args {
+            force_remove: true,
+            ..Default::default()
+        };
+
+        remove_file(&args, &path)?;
+
+        assert!(!path.exists());
+
+        Ok(())
+    }
+
+    /// Equivalent test for Windows doesn't exist due to symlink creation being a privileged action
+    #[cfg(unix)]
+    #[test]
+    fn test_remove_file_symlink() -> Result<()> {
+        let tmp_dir = TempDir::new("test_remove_file_symlink")?;
+        let symlink = tmp_dir.path().join("symlink");
+        let path = tmp_dir.path().join("terraform");
+        File::create(&path)?;
+        std::os::unix::fs::symlink(&path, &symlink)?;
+        let args = Args {
+            force_remove: true,
+            ..Default::default()
+        };
+
+        remove_file(&args, &symlink)?;
+
+        assert!(path.exists());
+        assert!(!symlink.exists());
 
         Ok(())
     }
