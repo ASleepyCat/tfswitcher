@@ -2,8 +2,11 @@ use anyhow::{bail, Context, Ok, Result};
 use clap::{CommandFactory, Parser};
 use core::fmt;
 use dialoguer::{theme::ColorfulTheme, Select};
+use env_logger::TimestampPrecision;
 use futures_util::stream::StreamExt;
-use indicatif::ProgressBar;
+use indicatif::{MultiProgress, ProgressBar};
+use indicatif_log_bridge::LogWrapper;
+use log::{debug, error, info, LevelFilter};
 use regex::Regex;
 use reqwest::Response;
 use semver::{Version, VersionReq};
@@ -48,6 +51,11 @@ struct Args {
     #[serde(default)]
     force_remove: bool,
 
+    /// Enable verbose logs
+    #[arg(short, long)]
+    #[serde(default)]
+    verbose: bool,
+
     #[arg(env = "TF_VERSION")]
     #[serde(rename = "version")]
     install_version: Option<String>,
@@ -79,6 +87,13 @@ impl Args {
             return ProgramName::OpenTofu;
         }
         ProgramName::Terraform
+    }
+
+    fn get_version_list(&self) -> VersionList {
+        if self.opentofu {
+            return VersionList::OpenTofu;
+        }
+        VersionList::Terraform
     }
 }
 
@@ -203,6 +218,7 @@ async fn get_http(url: &str) -> Result<Response> {
 async fn main() -> Result<()> {
     let mut args = Args::parse();
     parse_config_arguments(".".into(), &mut args)?;
+    let multi = init_logger(&args)?;
 
     if let Some(generator) = args.generator {
         clap_complete::generate(
@@ -215,16 +231,35 @@ async fn main() -> Result<()> {
     }
 
     let Some(program_path) = find_terraform_program_path(&args) else {
-        bail!(format!(
+        bail!(
             "could not find path to install {:?}",
             args.get_program_name()
-        ));
+        );
     };
 
     match get_version_to_install(&args).await? {
-        Some(version) => Ok(install_version(&args, &program_path, version).await?),
+        Some(version) => Ok(install_version(&args, multi, &program_path, version).await?),
         None => bail!("no version to install"),
     }
+}
+
+fn init_logger(args: &Args) -> Result<MultiProgress> {
+    let (ts_precision, level_filter) = if args.verbose {
+        (Some(TimestampPrecision::default()), LevelFilter::Debug)
+    } else {
+        (None, LevelFilter::Info)
+    };
+
+    let logger = env_logger::Builder::new()
+        .format_target(args.verbose)
+        .format_level(args.verbose)
+        .format_timestamp(ts_precision)
+        .filter_level(level_filter)
+        .build();
+    let multi = MultiProgress::new();
+    LogWrapper::new(multi.clone(), logger).try_init()?;
+
+    Ok(multi)
 }
 
 fn parse_config_arguments(cwd: PathBuf, args: &mut Args) -> Result<()> {
@@ -288,8 +323,8 @@ fn find_terraform_program_path(args: &Args) -> Option<PathBuf> {
     match home::home_dir() {
         Some(mut path) => {
             path.push(format!("{DEFAULT_LOCATION}/{program_name}"));
-            println!(
-                "Could not locate {program_name:?}, installing to {path:?}\nMake sure to include the directory in your $PATH environment variable"
+            info!(
+                "Could not locate {program_name:?}, installing to {path:?}. Make sure to include the directory in your $PATH environment variable"
             );
             Some(path)
         }
@@ -305,13 +340,7 @@ async fn get_version_to_install(args: &Args) -> Result<Option<ReleaseInfo>> {
         )));
     }
 
-    let version_list = if args.opentofu {
-        VersionList::OpenTofu
-    } else {
-        VersionList::Terraform
-    };
-    let versions = version_list.get_versions(args).await?;
-
+    let versions = args.get_version_list().get_versions(args).await?;
     if let Some(version_from_module) = get_version_from_module(Path::new("."), &versions)? {
         return Ok(Some(version_from_module));
     }
@@ -327,7 +356,7 @@ fn get_version_from_module(cwd: &Path, versions: &Vec<ReleaseInfo>) -> Result<Op
         None => return Ok(None),
     };
 
-    println!("Module constraint is {version_constraint}");
+    debug!("Module constraint is {version_constraint}");
 
     let req = VersionReq::parse(version_constraint)
         .with_context(|| format!("failed to parse version constraint {version_constraint}"))?;
@@ -362,25 +391,33 @@ fn get_version_from_user_prompt(
     }
 }
 
-async fn install_version(args: &Args, program_path: &Path, release: ReleaseInfo) -> Result<()> {
-    println!(
+async fn install_version(
+    args: &Args,
+    multi: MultiProgress,
+    program_path: &Path,
+    release: ReleaseInfo,
+) -> Result<()> {
+    debug!(
         "{:?} {} will be installed to {program_path:?}",
         args.get_program_name(),
         release.version
     );
 
-    let archive = get_zip(&release).await?;
+    let archive = get_zip(multi, &release).await?;
     remove_file(args, program_path)?;
     extract_zip_archive(args.get_program_name(), program_path, archive)
 }
 
-async fn get_zip(release: &ReleaseInfo) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
+async fn get_zip(
+    multi: MultiProgress,
+    release: &ReleaseInfo,
+) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
     if let Some(cursor) = get_cached_zip(home::home_dir().as_mut(), &release.get_zip_name())? {
         let archive = ZipArchive::new(cursor).with_context(|| "failed to read cached archive")?;
         return Ok(archive);
     }
 
-    download_and_save_zip(release).await
+    download_and_save_zip(multi, release).await
 }
 
 /// Creates appropriate platform archive suffix.
@@ -420,7 +457,7 @@ fn get_cached_zip(
                 return Ok(None);
             }
 
-            println!("Using cached archive at {path:?}");
+            debug!("Using cached archive at {path:?}");
             let buffer = fs::read(&path)
                 .with_context(|| format!("failed to read cached archive at {path:?}"))?;
             let cursor = Cursor::new(buffer);
@@ -431,32 +468,35 @@ fn get_cached_zip(
     }
 }
 
-async fn download_and_save_zip(release: &ReleaseInfo) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
-    let contents = download_zip(release).await?;
+async fn download_and_save_zip(
+    multi: MultiProgress,
+    release: &ReleaseInfo,
+) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
+    let contents = download_zip(multi, release).await?;
 
     match home::home_dir() {
         Some(mut path) => {
             path.push(DEFAULT_CACHE_LOCATION);
-            println!("Caching archive to {path:?}");
+            debug!("Caching archive to {path:?}");
             if let Err(e) = cache_zip_archive(&mut path, &release.get_zip_name(), &contents) {
-                println!("Unable to cache archive: {e}");
+                error!("Unable to cache archive: {e}");
             };
         }
-        None => println!("Unable to cache archive: could not find home directory"),
+        None => debug!("Unable to cache archive: could not find home directory"),
     }
 
     let cursor = Cursor::new(contents);
     Ok(ZipArchive::new(cursor).with_context(|| "failed to read HTTP response as ZIP archive")?)
 }
 
-async fn download_zip(release: &ReleaseInfo) -> Result<Vec<u8>> {
+async fn download_zip(multi: MultiProgress, release: &ReleaseInfo) -> Result<Vec<u8>> {
     let url = release.get_download_url();
-    println!("Downloading archive from {url}");
+    info!("Downloading archive from {url}");
     let response = get_http(&url).await?;
 
     let mut contents = vec![];
     if let Some(total_size) = response.content_length() {
-        let pb = ProgressBar::new(total_size);
+        let pb = multi.add(ProgressBar::new(total_size));
         let mut downloaded = 0;
         let mut stream = response.bytes_stream();
 
@@ -494,7 +534,7 @@ fn remove_file(args: &Args, program_path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    println!("Removing binary at {program_path:?}");
+    debug!("Removing binary at {program_path:?}");
     fs::remove_file(program_path)?;
 
     Ok(())
@@ -509,7 +549,7 @@ fn extract_zip_archive(
         .by_name(&program_name.to_string())
         .with_context(|| "could not get item in archive")?;
     let file_name = file.name();
-    println!("Extracting {file_name} to {program_path:?}");
+    debug!("Extracting {file_name} to {program_path:?}");
 
     // Create a new file for the extracted file and set rwxr-xr-x
     let mut outfile = create_output_file(program_path)?;
@@ -517,7 +557,7 @@ fn extract_zip_archive(
     // Write the contents of the file to the output file
     io::copy(&mut file, &mut outfile).with_context(|| "failed to extract zip archive")?;
 
-    println!("Extracted archive to {program_path:?}");
+    info!("Extracted archive to {program_path:?}");
     Ok(())
 }
 
@@ -694,6 +734,7 @@ opentofu = true"#;
             list_all: true,
             opentofu: true,
             force_remove: true,
+            verbose: true,
             install_version: Some("test_load_config_file_in_cwd".to_owned()),
             generator: None,
         };
@@ -701,6 +742,7 @@ opentofu = true"#;
 list_all = true
 opentofu = true
 force_remove = true
+verbose = true
 version = "test_load_config_file_in_cwd""#;
 
         let tmp_dir = TempDir::new("test_load_config_file_in_cwd")?;
@@ -721,6 +763,7 @@ version = "test_load_config_file_in_cwd""#;
             list_all: true,
             opentofu: true,
             force_remove: true,
+            verbose: true,
             install_version: Some("test_load_config_file_in_home".to_owned()),
             generator: None,
         };
@@ -728,6 +771,7 @@ version = "test_load_config_file_in_cwd""#;
 list_all = true
 opentofu = true
 force_remove = true
+verbose = true
 version = "test_load_config_file_in_home""#;
 
         let tmp_dir = TempDir::new("test_load_config_file_in_home")?;
