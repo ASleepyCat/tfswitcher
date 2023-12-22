@@ -13,10 +13,11 @@ To see available flags and arguments, run `tfswitcher -h` or `tfswitcher --help`
 You can also use a configuration file to automatically set certain flags or arguments. Simply place a file called `.tfswitch.toml` either in your current working directory or in your `$HOME` directory.
 
 ```toml
-bin = "/location/of/terraform/binary"
+bin = "$HOME/.local/bin/terraform"
 list_all = false
 opentofu = false
 force_remove = false
+verbose = false
 version = "1.0.0"
 ```
 
