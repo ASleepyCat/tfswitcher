@@ -551,7 +551,7 @@ fn extract_zip_archive(
     let file_name = file.name();
     debug!("Extracting {file_name} to {program_path:?}");
 
-    // Create a new file for the extracted file and set rwxr-xr-x
+    // Create a new file for the extracted file
     let mut outfile = create_output_file(program_path)?;
 
     // Write the contents of the file to the output file
