@@ -4,7 +4,25 @@ Terraform and OpenTofu version switcher written in Rust.
 
 ## Installation
 
-To install, simply run `cargo install tfswitcher`. There are also prebuilt binaries available with each release for Linux, macOS and Windows.
+### Homebrew
+
+To install via Homebrew, run:
+
+```bash
+brew install asleepycat/tap/tfswitcher
+```
+
+This will build from source.
+
+### Cargo
+
+To install with `cargo`, run:
+
+```bash
+cargo install tfswitcher
+```
+
+There are also prebuilt binaries available with each release for Linux, macOS and Windows.
 
 ## Usage
 
