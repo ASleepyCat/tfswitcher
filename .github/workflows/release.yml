@@ -55,6 +55,8 @@ jobs:
             sha256 "$(shasum < ${{ github.event.release.tag_name }} | cut -d " " -f1)"
             license "MIT"
 
+            depends_on "pkg-config" => :build
+            depends_on "openssl" => :build
             depends_on "rust" => :build
 
             # TODO: Add OpenTofu when it gets added to homebrew-core
