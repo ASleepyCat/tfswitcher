@@ -46,7 +46,7 @@ jobs:
       - name: Update Formula
         run: |
           wget https://codeload.github.com/ASleepyCat/tfswitcher/tar.gz/refs/tags/${{ github.event.release.tag_name }}
-          mkdir output/Formula
+          mkdir -p output/Formula
           cat <<EOF > output/Formula/tfswitcher.rb
           class Tfswitcher < Formula
             desc "Terraform and OpenTofu version switcher"
