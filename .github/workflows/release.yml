@@ -2,7 +2,7 @@ name: Release
 
 on:
   release:
-    types: [created]
+    types: [published]
 
 jobs:
   release:
@@ -37,3 +37,47 @@ jobs:
         with:
           registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           ignore-unpublished-changes: true
+
+  homebrew:
+    name: Update Homebrew Formula
+    runs-on: ubuntu-latest
+    needs: publish
+    steps:
+      - name: Update Formula
+        run: |
+          wget https://codeload.github.com/ASleepyCat/tfswitcher/tar.gz/refs/tags/${{ github.event.release.tag_name }}
+          mkdir output/Formula
+          cat <<EOF > output/Formula/tfswitcher.rb
+          class Tfswitcher < Formula
+            desc "Terraform and OpenTofu version switcher"
+            homepage "https://github.com/ASleepyCat/tfswitcher"
+            url "https://github.com/ASleepyCat/tfswitcher/archive/refs/tags/${{ github.event.release.tag_name }}.tar.gz"
+            sha256 "$(shasum < ${{ github.event.release.tag_name }} | cut -d " " -f1)"
+            license "MIT"
+
+            depends_on "pkg-config" => :build
+            depends_on "openssl" => :build
+            depends_on "rust" => :build
+
+            # TODO: Add OpenTofu when it gets added to homebrew-core
+            conflicts_with "terraform", because: "tfswitcher overwrites the current terraform install"
+
+            def install
+              system "cargo", "install", *std_cargo_args
+            end
+
+            test do
+              assert_match "tfswitcher #{version}", shell_output("#{bin}/tfswitcher -V")
+            end
+          end
+          EOF
+      - uses: cpina/github-action-push-to-another-repository@main
+        env:
+          SSH_DEPLOY_KEY: ${{ secrets.SSH_DEPLOY_KEY }}
+        with:
+          source-directory: output
+          destination-github-username: ASleepyCat
+          destination-repository-name: homebrew-tap
+          user-email: dyeom340@gmail.com
+          target-branch: main
+          commit-message: Update tfswitcher Formula to ${{ github.event.release.tag_name }}
