@@ -62,18 +62,21 @@ jobs:
 
   release:
     name: Release ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include: 
-          - target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
             archive: tfswitcher-${{ github.event.release.tag_name }}-x86_64-unknown-linux-gnu.tar.gz
             archive-command: tar caf
-          - target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
             archive: tfswitcher-${{ github.event.release.tag_name }}-x86_64-pc-windows-msvc.zip
-            archive-command: zip -9
-          - target: x86_64-apple-darwin
+            archive-command: 7z a
+          - os: macos-latest
+            target: x86_64-apple-darwin
             archive: tfswitcher-${{ github.event.release.tag_name }}-x86_64-apple-darwin.zip
             archive-command: zip -9
     steps:
@@ -85,7 +88,7 @@ jobs:
           target: ${{ matrix.target }}
       - name: Upload release assets
         run: |
-          cd target/release
+          cd target/${{ matrix.target }}/release
           ${{ matrix.archive-command }} ${{ matrix.archive }}
           shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256sum
 
