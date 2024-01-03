@@ -86,9 +86,11 @@ jobs:
         uses: houseabsolute/actions-rust-cross@v0
         with:
           target: ${{ matrix.target }}
+          args: "--locked --release"
       - name: Upload release assets
         run: |
-          cd target/${{ matrix.target }}/release
+          ls target
+          cd target/release
           ${{ matrix.archive-command }} ${{ matrix.archive }}
           shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256sum
 
