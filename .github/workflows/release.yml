@@ -89,8 +89,7 @@ jobs:
           args: "--locked --release"
       - name: Upload release assets
         run: |
-          ls target
-          cd target/release
+          cd target/${{ matrix.target }}/release
           ${{ matrix.archive-command }} ${{ matrix.archive }}
           shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256sum
 
