@@ -90,25 +90,31 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: "--locked --release"
-      - name: Upload release assets
-        shell: bash
+      - name: Get upload URL
+        id: get_uoload_url
+        uses: bruceadams/get-release@v1.3.2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Create SHA256
         run: |
           cd target/${{ matrix.target }}/release
           ${{ matrix.archive-command }} ${{ matrix.archive }} ${{ matrix.bin }}
           sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256sum
-
-          curl \
-            --fail-with-body -sS \
-            -X POST \
-            --data-binary @"${{ matrix.archive }}" \
-            -H 'Content-Type: application/octet-stream' \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "${{ github.event.release.upload_url }}?name=${{ matrix.archive }}"
-
-          curl \
-            --fail-with-body -sS \
-            -X POST \
-            --data-binary @"${{ matrix.archive }}.sha256sum" \
-            -H 'Content-Type: text/plain' \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "${{ github.event.release.upload_url }}?name=${{ matrix.archive }}.sha256sum"
+      - name: Upload archive
+        uses: actions/upload-release-asset@v1.0.2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          upload_url: ${{ steps.get_uoload_url.outputs.upload_url }}
+          asset_path: ${{ matrix.archive }}
+          asset_name: ${{ matrix.archive }}
+          asset_content_type: application/octet-stream
+      - name: Upload SHA256
+        uses: actions/upload-release-asset@v1.0.2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          upload_url: ${{ steps.get_uoload_url.outputs.upload_url }}
+          asset_path: ${{ matrix.archive }}.sha256sum
+          asset_name: ${{ matrix.archive }}.sha256sum
+          asset_content_type: test/plain
