@@ -88,6 +88,7 @@ jobs:
           target: ${{ matrix.target }}
           args: "--locked --release"
       - name: Upload release assets
+        shell: bash
         run: |
           cd target/${{ matrix.target }}/release
           ${{ matrix.archive-command }} ${{ matrix.archive }}
