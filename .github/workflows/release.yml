@@ -6,37 +6,49 @@ on:
 
 jobs:
   release:
-    name: Release ${{ matrix.target }}
+    name: Release ${{ matrix.platform.target }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-pc-windows-gnu
-            archive: zip
-          - target: x86_64-unknown-linux-musl
-            archive: tar.gz
+        platform: 
+          - target: x86_64-unknown-linux-gnu
+            archive: tfswitcher-${{ github.event.release.tag_name }}-x86_64-unknown-linux-gnu.tar.gz
+            archive-command: tar caf
+          - target: x86_64-pc-windows-msvc
+            archive: tfswitcher-${{ github.event.release.tag_name }}-x86_64-pc-windows-msvc.zip
+            archive-command: zip -9
           - target: x86_64-apple-darwin
-            archive: zip
+            archive: tfswitcher-${{ github.event.release.tag_name }}-x86_64-apple-darwin.zip
+            archive-command: zip -9
     steps:
       - uses: actions/checkout@v4
-      - name: Compile and release
-        uses: rust-build/rust-build.action@v1.4.4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile
+        uses: houseabsolute/actions-rust-cross@v0
         with:
-          RUSTTARGET: ${{ matrix.target }}
-          ARCHIVE_TYPES: ${{ matrix.archive }}
-          TOOLCHAIN_VERSION: stable
-  publish:
-    name: Publish
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: katyo/publish-crates@v2
-        with:
-          registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          ignore-unpublished-changes: true
+          target: ${{ matrix.platform.target }}
+      - name: Upload release assets
+        run: |
+          cd target/release
+          ${{ matrix.platform.archive-command }} ${{ matrix.platform.archive }}
+          shasum -a 256 ${{ matrix.platform.archive }} > ${{ matrix.platform.archive }}.sha256sum
+
+          curl \
+            --fail-with-body -sS \
+            -X POST \
+            --data-binary @"${{ matrix.platform.archive }}" \
+            -H 'Content-Type: application/octet-stream' \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.event.release.upload_url }}?name=${{ matrix.platform.archive }}"
+
+          curl \
+            --fail-with-body -sS \
+            -X POST \
+            --data-binary @"${{ matrix.platform.archive }}.sha256sum" \
+            -H 'Content-Type: text/plain' \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.event.release.upload_url }}?name=${{ matrix.platform.archive }}.sha256sum"
 
   homebrew:
     name: Update Homebrew Formula
@@ -48,13 +60,12 @@ jobs:
           repository: ASleepyCat/homebrew-tap
       - name: Update Formula
         run: |
-          wget https://codeload.github.com/ASleepyCat/tfswitcher/tar.gz/refs/tags/${{ github.event.release.tag_name }}
           cat <<EOF > Formula/tfswitcher.rb
           class Tfswitcher < Formula
             desc "Terraform and OpenTofu version switcher"
             homepage "https://github.com/ASleepyCat/tfswitcher"
             url "https://github.com/ASleepyCat/tfswitcher/archive/refs/tags/${{ github.event.release.tag_name }}.tar.gz"
-            sha256 "$(shasum < ${{ github.event.release.tag_name }} | cut -d " " -f1)"
+            sha256 "$(curl -sL https://codeload.github.com/ASleepyCat/tfswitcher/tar.gz/refs/tags/${{ github.event.release.tag_name }} | shasum -a 256 | cut -d " " -f1)"
             license "MIT"
 
             depends_on "openssl" => :build
@@ -83,3 +94,13 @@ jobs:
           user-email: dyeom340@gmail.com
           target-branch: main
           commit-message: Update tfswitcher Formula to ${{ github.event.release.tag_name }}
+
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: katyo/publish-crates@v2
+        with:
+          registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          ignore-unpublished-changes: true
