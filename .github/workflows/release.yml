@@ -71,16 +71,19 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive: tfswitcher-${{ github.event.release.tag_name }}-x86_64-unknown-linux-gnu.tar.gz
             archive-command: tar caf
+            sha256-command: sha256sum
             bin: tfswitcher
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: tfswitcher-${{ github.event.release.tag_name }}-x86_64-pc-windows-msvc.zip
             archive-command: 7z a
             bin: tfswitcher.exe
+            sha256-command: sha256sum
           - os: macos-latest
             target: x86_64-apple-darwin
             archive: tfswitcher-${{ github.event.release.tag_name }}-x86_64-apple-darwin.zip
             archive-command: zip -9
+            sha256-command: shasum -a 256
             bin: tfswitcher
     steps:
       - uses: actions/checkout@v4
@@ -99,7 +102,7 @@ jobs:
         working-directory: target/${{ matrix.target }}/release
         run: |
           ${{ matrix.archive-command }} ${{ matrix.archive }} ${{ matrix.bin }}
-          sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256sum
+          ${{ matrix.sha256-command }} ${{ matrix.archive }} > ${{ matrix.archive }}.sha256sum
       - name: Upload archive
         uses: actions/upload-release-asset@v1.0.2
         env:
