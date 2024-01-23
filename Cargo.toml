@@ -15,7 +15,7 @@ categories = ["command-line-utilities"]
 [dependencies]
 anyhow = "1.0.79"
 clap = { version = "4.4.16", features = ["cargo", "derive", "env"] }
-clap_complete = "4.4.6"
+clap_complete = "4.4.9"
 dialoguer = "0.11.0"
 env_logger = "0.10.2"
 futures-util = "0.3.30"
