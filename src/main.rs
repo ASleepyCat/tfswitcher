@@ -498,6 +498,8 @@ async fn download_and_cache_bin(multi: MultiProgress, release: &ReleaseInfo) -> 
     Ok(binary)
 }
 
+/// This is a holdover from old code that used to cache the archive instead of the binary
+/// We do this so we can clean up old archives instead of redownloading them
 fn get_cached_zip(
     home_dir: Option<&mut PathBuf>,
     zip_name: &str,
