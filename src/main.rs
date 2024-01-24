@@ -565,6 +565,21 @@ async fn download_zip(
     Ok(ZipArchive::new(cursor).with_context(|| "failed to read HTTP response as ZIP archive")?)
 }
 
+fn extract_zip_archive(
+    program_name: &ProgramName,
+    mut archive: ZipArchive<Cursor<Vec<u8>>>,
+) -> Result<Vec<u8>> {
+    let mut file = archive
+        .by_name(&program_name.to_string())
+        .with_context(|| "could not get item in archive")?;
+
+    let mut buf = vec![];
+    file.read_to_end(&mut buf)
+        .with_context(|| "failed to read archive")?;
+
+    Ok(buf)
+}
+
 fn cache_binary(cache_location: Option<&mut PathBuf>, bin_name: &str, buffer: &[u8]) -> Result<()> {
     match cache_location {
         Some(path) => {
@@ -590,21 +605,6 @@ fn remove_file(args: &Args, program_path: &Path) -> Result<()> {
     fs::remove_file(program_path)?;
 
     Ok(())
-}
-
-fn extract_zip_archive(
-    program_name: &ProgramName,
-    mut archive: ZipArchive<Cursor<Vec<u8>>>,
-) -> Result<Vec<u8>> {
-    let mut file = archive
-        .by_name(&program_name.to_string())
-        .with_context(|| "could not get item in archive")?;
-
-    let mut buf = vec![];
-    file.read_to_end(&mut buf)
-        .with_context(|| "failed to read archive")?;
-
-    Ok(buf)
 }
 
 #[cfg(unix)]
