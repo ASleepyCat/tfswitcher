@@ -6,7 +6,7 @@ use env_logger::TimestampPrecision;
 use futures_util::stream::StreamExt;
 use indicatif::{MultiProgress, ProgressBar};
 use indicatif_log_bridge::LogWrapper;
-use log::{debug, error, info, LevelFilter};
+use log::{debug, info, LevelFilter};
 use regex::Regex;
 use reqwest::Response;
 use semver::{Version, VersionReq};
@@ -15,9 +15,10 @@ use std::{
     cmp,
     env::consts,
     fs::{self, File, OpenOptions},
-    io::{self, Cursor},
+    io::{self, Cursor, Read, Write},
     path::{Path, PathBuf},
     str::FromStr,
+    vec,
 };
 use zip::ZipArchive;
 
@@ -111,6 +112,11 @@ impl ReleaseInfo {
         }
     }
 
+    fn get_binary_name(&self) -> String {
+        let target = get_target_platform();
+        format!("{}_{}_{target}", self.program_name, self.version)
+    }
+
     fn get_zip_name(&self) -> String {
         let target = get_target_platform();
         format!("{}_{}_{target}.zip", self.program_name, self.version)
@@ -148,6 +154,32 @@ impl VersionList {
             VersionList::Terraform => Ok(get_versions_terraform(args).await?),
             VersionList::OpenTofu => Ok(get_versions_opentofu(args).await?),
         }
+    }
+}
+
+/// Creates appropriate platform archive suffix.
+///
+/// Converts Rust constants `OS` and `ARCH` to equivalent Go runtime package `GOOS` and `GOARCH`.
+/// https://docs.rs/rustc-std-workspace-std/latest/std/env/consts/constant.ARCH.html
+/// https://docs.rs/rustc-std-workspace-std/latest/std/env/consts/constant.OS.html
+/// https://pkg.go.dev/runtime#pkg-constants
+fn get_target_platform() -> &'static str {
+    match (consts::OS, consts::ARCH) {
+        ("freebsd", "arm") => "freebsd_arm",
+        ("freebsd", "x86") => "freebsd_386",
+        ("freebsd", "x86_64") => "freebsd_amd64",
+        ("linux", "aarch64") => "linux_arm64",
+        ("linux", "arm") => "linux_arm",
+        ("linux", "x86") => "linux_386",
+        ("linux", "x86_64") => "linux_amd64",
+        ("macos", "aarch64") => "darwin_arm64",
+        ("macos", "x86_64") => "darwin_amd64",
+        ("openbsd", "x86") => "openbsd_386",
+        ("openbsd", "x86_64") => "openbsd_amd64",
+        ("solaris", "x86_64") => "solaris_amd64",
+        ("windows", "x86") => "windows_386",
+        ("windows", "x86_64") => "windows_amd64",
+        _ => panic!("Unsupported platform"),
     }
 }
 
@@ -403,49 +435,71 @@ async fn install_version(
         release.version
     );
 
-    let archive = get_zip(multi, &release).await?;
+    let binary = get_binary(multi, &release).await?;
     remove_file(args, program_path)?;
-    extract_zip_archive(args.get_program_name(), program_path, archive)
+
+    // Create a new file for the extracted file
+    let mut outfile = create_output_file(program_path)?;
+    debug!("Copying binary to {program_path:?}");
+
+    // Write the contents of the file to the output file
+    outfile
+        .write_all(&binary)
+        .with_context(|| "failed to copy binary")?;
+
+    info!(
+        "Installed {:?} to {program_path:?}",
+        args.get_program_name()
+    );
+    Ok(())
 }
 
-async fn get_zip(
-    multi: MultiProgress,
-    release: &ReleaseInfo,
-) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
+async fn get_binary(multi: MultiProgress, release: &ReleaseInfo) -> Result<Vec<u8>> {
+    if let Some(buffer) = get_cached_binary(home::home_dir().as_mut(), &release.get_binary_name())?
+    {
+        return Ok(buffer);
+    }
+
+    Ok(download_and_cache_bin(multi, release).await?)
+}
+
+fn get_cached_binary(home_dir: Option<&mut PathBuf>, bin_name: &str) -> Result<Option<Vec<u8>>> {
+    match home_dir {
+        Some(path) => {
+            path.push(format!("{DEFAULT_CACHE_LOCATION}/{bin_name}"));
+            if !path.exists() {
+                return Ok(None);
+            }
+
+            debug!("Using cached binary at {path:?}");
+            let buffer = fs::read(&path)
+                .with_context(|| format!("failed to read cached binary at {path:?}"))?;
+
+            Ok(Some(buffer))
+        }
+        None => Ok(None),
+    }
+}
+
+async fn download_and_cache_bin(multi: MultiProgress, release: &ReleaseInfo) -> Result<Vec<u8>> {
+    let binary: Vec<u8>;
     if let Some(cursor) = get_cached_zip(home::home_dir().as_mut(), &release.get_zip_name())? {
         let archive = ZipArchive::new(cursor).with_context(|| "failed to read cached archive")?;
-        return Ok(archive);
+        binary = extract_zip_archive(&release.program_name, archive)?;
+    } else {
+        binary = download_bin(multi, release).await?;
     }
 
-    download_and_save_zip(multi, release).await
+    cache_binary(
+        home::home_dir().as_mut(),
+        &release.get_binary_name(),
+        &binary,
+    )?;
+    Ok(binary)
 }
 
-/// Creates appropriate platform archive suffix.
-///
-/// Converts Rust constants `OS` and `ARCH` to equivalent Go runtime package `GOOS` and `GOARCH`.
-/// https://docs.rs/rustc-std-workspace-std/latest/std/env/consts/constant.ARCH.html
-/// https://docs.rs/rustc-std-workspace-std/latest/std/env/consts/constant.OS.html
-/// https://pkg.go.dev/runtime#pkg-constants
-fn get_target_platform() -> &'static str {
-    match (consts::OS, consts::ARCH) {
-        ("freebsd", "arm") => "freebsd_arm",
-        ("freebsd", "x86") => "freebsd_386",
-        ("freebsd", "x86_64") => "freebsd_amd64",
-        ("linux", "aarch64") => "linux_arm64",
-        ("linux", "arm") => "linux_arm",
-        ("linux", "x86") => "linux_386",
-        ("linux", "x86_64") => "linux_amd64",
-        ("macos", "aarch64") => "darwin_arm64",
-        ("macos", "x86_64") => "darwin_amd64",
-        ("openbsd", "x86") => "openbsd_386",
-        ("openbsd", "x86_64") => "openbsd_amd64",
-        ("solaris", "x86_64") => "solaris_amd64",
-        ("windows", "x86") => "windows_386",
-        ("windows", "x86_64") => "windows_amd64",
-        _ => panic!("Unsupported platform"),
-    }
-}
-
+/// This is a holdover from old code that used to cache the archive instead of the binary
+/// We do this so we can clean up old archives instead of redownloading them
 fn get_cached_zip(
     home_dir: Option<&mut PathBuf>,
     zip_name: &str,
@@ -460,6 +514,8 @@ fn get_cached_zip(
             debug!("Using cached archive at {path:?}");
             let buffer = fs::read(&path)
                 .with_context(|| format!("failed to read cached archive at {path:?}"))?;
+            fs::remove_file(&path)
+                .with_context(|| "could not clean up cached archive at {path:?}")?;
             let cursor = Cursor::new(buffer);
 
             Ok(Some(cursor))
@@ -468,28 +524,15 @@ fn get_cached_zip(
     }
 }
 
-async fn download_and_save_zip(
+async fn download_bin(multi: MultiProgress, release: &ReleaseInfo) -> Result<Vec<u8>> {
+    let archive = download_zip(multi, release).await?;
+    Ok(extract_zip_archive(&release.program_name, archive)?)
+}
+
+async fn download_zip(
     multi: MultiProgress,
     release: &ReleaseInfo,
 ) -> Result<ZipArchive<Cursor<Vec<u8>>>> {
-    let contents = download_zip(multi, release).await?;
-
-    match home::home_dir() {
-        Some(mut path) => {
-            path.push(DEFAULT_CACHE_LOCATION);
-            debug!("Caching archive to {path:?}");
-            if let Err(e) = cache_zip_archive(&mut path, &release.get_zip_name(), &contents) {
-                error!("Unable to cache archive: {e}");
-            };
-        }
-        None => debug!("Unable to cache archive: could not find home directory"),
-    }
-
-    let cursor = Cursor::new(contents);
-    Ok(ZipArchive::new(cursor).with_context(|| "failed to read HTTP response as ZIP archive")?)
-}
-
-async fn download_zip(multi: MultiProgress, release: &ReleaseInfo) -> Result<Vec<u8>> {
     let url = release.get_download_url();
     info!("Downloading archive from {url}");
     let response = get_http(&url).await?;
@@ -518,13 +561,37 @@ async fn download_zip(multi: MultiProgress, release: &ReleaseInfo) -> Result<Vec
             .to_vec();
     }
 
-    Ok(contents)
+    let cursor = Cursor::new(contents);
+    Ok(ZipArchive::new(cursor).with_context(|| "failed to read HTTP response as ZIP archive")?)
 }
 
-fn cache_zip_archive(cache_location: &mut PathBuf, zip_name: &str, buffer: &[u8]) -> Result<()> {
-    fs::create_dir_all(&cache_location)?;
-    cache_location.push(zip_name);
-    fs::write(cache_location, buffer)?;
+fn extract_zip_archive(
+    program_name: &ProgramName,
+    mut archive: ZipArchive<Cursor<Vec<u8>>>,
+) -> Result<Vec<u8>> {
+    let mut file = archive
+        .by_name(&program_name.to_string())
+        .with_context(|| "could not get item in archive")?;
+
+    let mut buf = vec![];
+    file.read_to_end(&mut buf)
+        .with_context(|| "failed to read archive")?;
+
+    Ok(buf)
+}
+
+fn cache_binary(cache_location: Option<&mut PathBuf>, bin_name: &str, buffer: &[u8]) -> Result<()> {
+    match cache_location {
+        Some(path) => {
+            path.push(DEFAULT_CACHE_LOCATION);
+            debug!("Caching binary to {path:?}");
+            fs::create_dir_all(&path)
+                .with_context(|| format!("failed to create cache directory at {path:?}"))?;
+            path.push(bin_name);
+            fs::write(path, buffer).with_context(|| "failed to cache binary")?;
+        }
+        None => debug!("Unable to cache binary: could not find cache directory"),
+    }
 
     Ok(())
 }
@@ -537,27 +604,6 @@ fn remove_file(args: &Args, program_path: &Path) -> Result<()> {
     debug!("Removing binary at {program_path:?}");
     fs::remove_file(program_path)?;
 
-    Ok(())
-}
-
-fn extract_zip_archive(
-    program_name: ProgramName,
-    program_path: &Path,
-    mut archive: ZipArchive<Cursor<Vec<u8>>>,
-) -> Result<()> {
-    let mut file = archive
-        .by_name(&program_name.to_string())
-        .with_context(|| "could not get item in archive")?;
-    let file_name = file.name();
-    debug!("Extracting {file_name} to {program_path:?}");
-
-    // Create a new file for the extracted file
-    let mut outfile = create_output_file(program_path)?;
-
-    // Write the contents of the file to the output file
-    io::copy(&mut file, &mut outfile).with_context(|| "failed to extract zip archive")?;
-
-    info!("Extracted archive to {program_path:?}");
     Ok(())
 }
 
@@ -890,43 +936,42 @@ version = "test_load_config_file_in_home""#;
         let cache_dir = tmp_dir.path().join(DEFAULT_CACHE_LOCATION);
         let file_path = cache_dir.join(ZIP_NAME);
         fs::create_dir_all(cache_dir)?;
-        File::create(file_path)?;
+        File::create(&file_path)?;
 
         let file = get_cached_zip(Some(&mut tmp_dir.path().to_path_buf()), ZIP_NAME)?;
         assert!(file.is_some());
+        assert!(!file_path.exists());
 
         Ok(())
     }
 
     #[test]
-    fn test_cache_zip_file() -> Result<()> {
-        const ZIP_NAME: &str = "test_archive.zip";
+    fn test_cache_binary_file() -> Result<()> {
+        const BIN_NAME: &str = "test_binary";
 
-        let tmp_dir = TempDir::new("test_cache_zip_file")?;
+        let tmp_dir = TempDir::new("test_cache_binary_file")?;
         let mut sub_dir = tmp_dir.path().join("tfswitcher");
-        let file_path = sub_dir.join(ZIP_NAME);
         let buffer = vec![];
 
-        cache_zip_archive(&mut sub_dir, ZIP_NAME, &buffer)?;
+        cache_binary(Some(&mut sub_dir), BIN_NAME, &buffer)?;
 
-        assert!(file_path.exists());
+        assert!(sub_dir.exists());
 
         Ok(())
     }
 
     #[test]
-    fn test_cache_zip_file_dir_exists() -> Result<()> {
-        const ZIP_NAME: &str = "test_archive.zip";
+    fn test_cache_binary_file_dir_exists() -> Result<()> {
+        const BIN_NAME: &str = "test_binary";
 
-        let tmp_dir = TempDir::new("test_cache_zip_file_dir_exists")?;
+        let tmp_dir = TempDir::new("test_cache_binary_file_dir_exists")?;
         let mut sub_dir = tmp_dir.path().join("tfswitcher");
         fs::create_dir_all(&sub_dir)?;
-        let file_path = sub_dir.join(ZIP_NAME);
         let buffer = vec![];
 
-        cache_zip_archive(&mut sub_dir, ZIP_NAME, &buffer)?;
+        cache_binary(Some(&mut sub_dir), BIN_NAME, &buffer)?;
 
-        assert!(file_path.exists());
+        assert!(sub_dir.exists());
 
         Ok(())
     }
