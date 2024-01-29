@@ -23,7 +23,7 @@ home = "0.5.9"
 indicatif = "0.17.7"
 indicatif-log-bridge = "0.2.2"
 log = "0.4.20"
-octocrab = "0.33.1"
+octocrab = "0.33.3"
 pathsearch = "0.2.0"
 regex = "1.10.3"
 reqwest = { version = "0.11.23", features = ["json", "stream"] }
