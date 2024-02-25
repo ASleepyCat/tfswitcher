@@ -372,26 +372,46 @@ async fn get_version_to_install(args: &Args) -> Result<Option<ReleaseInfo>> {
         )));
     }
 
+    let version_constraint = get_version_from_module(Path::new("."))?;
+    if let Some(version_constraint) = version_constraint.clone() {
+        if !args.force_remove {
+            let release = ReleaseInfo::new(args.get_program_name(), version_constraint.into());
+            if find_cached_binary(home::home_dir().as_mut(), &release.get_binary_name())?.is_some()
+            {
+                return Ok(Some(release));
+            }
+        }
+    }
+
     let versions = args.get_version_list().get_versions(args).await?;
-    if let Some(version_from_module) = get_version_from_module(Path::new("."), &versions)? {
-        return Ok(Some(version_from_module));
+    if let Some(version_constraint) = version_constraint {
+        if let Some(version_from_module) = match_module_version(&version_constraint, &versions)? {
+            return Ok(Some(version_from_module));
+        }
     }
 
     get_version_from_user_prompt(args.get_program_name(), &versions)
 }
 
-fn get_version_from_module(cwd: &Path, versions: &Vec<ReleaseInfo>) -> Result<Option<ReleaseInfo>> {
+fn get_version_from_module(cwd: &Path) -> Result<Option<String>> {
     let module =
         tfconfig::load_module(cwd, false).with_context(|| "failed to load terraform modules")?;
-    let version_constraint = match module.required_core.first() {
-        Some(version) => version,
-        None => return Ok(None),
-    };
+    match module.required_core.first() {
+        Some(version) => {
+            debug!("Module constraint is {version}");
+            Ok(Some(version.into()))
+        }
+        None => Ok(None),
+    }
+}
 
-    debug!("Module constraint is {version_constraint}");
-
+fn match_module_version(
+    version_constraint: &str,
+    versions: &Vec<ReleaseInfo>,
+) -> Result<Option<ReleaseInfo>> {
     let req = VersionReq::parse(version_constraint)
         .with_context(|| format!("failed to parse version constraint {version_constraint}"))?;
+
     for version in versions {
         let v = Version::from_str(&version.version)
             .with_context(|| format!("failed to parse version {}", version.version))?;
@@ -463,14 +483,22 @@ async fn get_binary(multi: MultiProgress, release: &ReleaseInfo) -> Result<Vec<u
     Ok(download_and_cache_bin(multi, release).await?)
 }
 
-fn get_cached_binary(home_dir: Option<&mut PathBuf>, bin_name: &str) -> Result<Option<Vec<u8>>> {
+fn find_cached_binary(home_dir: Option<&mut PathBuf>, bin_name: &str) -> Result<Option<PathBuf>> {
     match home_dir {
         Some(path) => {
             path.push(format!("{DEFAULT_CACHE_LOCATION}/{bin_name}"));
             if !path.exists() {
                 return Ok(None);
             }
+            Ok(Some(path.to_path_buf()))
+        }
+        None => Ok(None),
+    }
+}
 
+fn get_cached_binary(home_dir: Option<&mut PathBuf>, bin_name: &str) -> Result<Option<Vec<u8>>> {
+    match find_cached_binary(home_dir, bin_name)? {
+        Some(path) => {
             debug!("Using cached binary at {path:?}");
             let buffer = fs::read(&path)
                 .with_context(|| format!("failed to read cached binary at {path:?}"))?;
@@ -894,16 +922,30 @@ version = "test_load_config_file_in_home""#;
 
     #[test]
     fn test_get_version_from_module() -> Result<()> {
-        let expected_release = ReleaseInfo::new(ProgramName::Terraform, "1.0.0".into());
-        let versions = vec![expected_release.clone()];
+        const EXPECTED_VERSION: &str = "~>1.0.0";
 
         let tmp_dir = TempDir::new("test_get_version_from_module")?;
         let tmp_dir_path = tmp_dir.path();
         let file_path = tmp_dir_path.join("version.tf");
-        fs::write(file_path, r#"terraform { required_version = "~>1.0.0" }"#)?;
+        fs::write(
+            file_path,
+            format!(r#"terraform {{ required_version = "{EXPECTED_VERSION}" }}"#),
+        )?;
 
-        let actual_version = get_version_from_module(tmp_dir_path, &versions)?;
-        assert_eq!(Some(expected_release), actual_version);
+        let actual_version = get_version_from_module(tmp_dir_path)?;
+        assert_eq!(Some(EXPECTED_VERSION), actual_version.as_deref());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_match_module_version() -> Result<()> {
+        const VERSION_CONSTRAINT: &str = "1.0.0";
+        let expected_release = ReleaseInfo::new(ProgramName::Terraform, VERSION_CONSTRAINT.into());
+        let versions = vec![expected_release.clone()];
+
+        let actual_release = match_module_version(VERSION_CONSTRAINT, &versions)?;
+        assert_eq!(Some(expected_release), actual_release);
 
         Ok(())
     }
