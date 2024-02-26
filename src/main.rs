@@ -73,6 +73,15 @@ enum ProgramName {
     OpenTofu,
 }
 
+impl ProgramName {
+    fn eq(&self, other: &str) -> bool {
+        match self {
+            ProgramName::Terraform => other == "terraform",
+            ProgramName::OpenTofu => other == "tofu",
+        }
+    }
+}
+
 impl fmt::Display for ProgramName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -375,9 +384,10 @@ async fn get_version_to_install(args: &Args) -> Result<Option<ReleaseInfo>> {
     let version_constraint = get_version_from_module(Path::new("."))?;
     if let Some(version_constraint) = version_constraint.clone() {
         if !args.force_remove {
-            let release = ReleaseInfo::new(args.get_program_name(), version_constraint.into());
-            if find_cached_binary(home::home_dir().as_mut(), &release.get_binary_name())?.is_some()
+            if let Some((_, version)) =
+                find_cached_binary(args, home::home_dir().as_mut(), &version_constraint)?
             {
+                let release = ReleaseInfo::new(args.get_program_name(), version);
                 return Ok(Some(release));
             }
         }
@@ -393,29 +403,28 @@ async fn get_version_to_install(args: &Args) -> Result<Option<ReleaseInfo>> {
     get_version_from_user_prompt(args.get_program_name(), &versions)
 }
 
-fn get_version_from_module(cwd: &Path) -> Result<Option<String>> {
+fn get_version_from_module(cwd: &Path) -> Result<Option<VersionReq>> {
     let module =
         tfconfig::load_module(cwd, false).with_context(|| "failed to load terraform modules")?;
     match module.required_core.first() {
         Some(version) => {
             debug!("Module constraint is {version}");
-            Ok(Some(version.into()))
+            let req = VersionReq::parse(version)
+                .with_context(|| format!("failed to parse version constraint {version}"))?;
+            Ok(Some(req))
         }
         None => Ok(None),
     }
 }
 
 fn match_module_version(
-    version_constraint: &str,
+    version_constraint: &VersionReq,
     versions: &Vec<ReleaseInfo>,
 ) -> Result<Option<ReleaseInfo>> {
-    let req = VersionReq::parse(version_constraint)
-        .with_context(|| format!("failed to parse version constraint {version_constraint}"))?;
-
     for version in versions {
         let v = Version::from_str(&version.version)
             .with_context(|| format!("failed to parse version {}", version.version))?;
-        if req.matches(&v) {
+        if version_constraint.matches(&v) {
             return Ok(Some(version.clone()));
         }
     }
@@ -455,7 +464,7 @@ async fn install_version(
         release.version
     );
 
-    let binary = get_binary(multi, &release).await?;
+    let binary = get_binary(args, multi, &release).await?;
     remove_file(args, program_path)?;
 
     // Create a new file for the extracted file
@@ -474,31 +483,66 @@ async fn install_version(
     Ok(())
 }
 
-async fn get_binary(multi: MultiProgress, release: &ReleaseInfo) -> Result<Vec<u8>> {
-    if let Some(buffer) = get_cached_binary(home::home_dir().as_mut(), &release.get_binary_name())?
-    {
+async fn get_binary(args: &Args, multi: MultiProgress, release: &ReleaseInfo) -> Result<Vec<u8>> {
+    if let Some(buffer) = get_cached_binary(home::home_dir().as_mut(), &release.version, args)? {
         return Ok(buffer);
     }
 
     Ok(download_and_cache_bin(multi, release).await?)
 }
 
-fn find_cached_binary(home_dir: Option<&mut PathBuf>, bin_name: &str) -> Result<Option<PathBuf>> {
-    match home_dir {
-        Some(path) => {
-            path.push(format!("{DEFAULT_CACHE_LOCATION}/{bin_name}"));
-            if !path.exists() {
-                return Ok(None);
-            }
-            Ok(Some(path.to_path_buf()))
+fn find_cached_binary(
+    args: &Args,
+    home_dir: Option<&mut PathBuf>,
+    version: &VersionReq,
+) -> Result<Option<(PathBuf, String)>> {
+    if let Some(path) = home_dir {
+        path.push(DEFAULT_CACHE_LOCATION);
+        if !path.exists() {
+            return Ok(None);
         }
-        None => Ok(None),
+
+        let mut files: Vec<_> = fs::read_dir(path)?
+            .filter_map(Result::ok)
+            .filter(|f| f.path().extension() != Some("zip".as_ref()))
+            .collect();
+        files.sort_by_key(|d| d.path());
+        files.reverse();
+        for file in files {
+            let file_name = file.file_name();
+            if let Some(bin_version) = file_name.to_str() {
+                let mut split = bin_version.split("_");
+                let bin = match split.nth(0) {
+                    Some(b) => b,
+                    None => continue,
+                };
+                let version_split = match split.nth(0) {
+                    Some(v) => v,
+                    None => continue,
+                };
+                if args.get_program_name().eq(bin) {
+                    if version.matches(
+                        &Version::from_str(version_split)
+                            .with_context(|| format!("failed to parse {version_split}"))?,
+                    ) {
+                        return Ok(Some((file.path(), version_split.to_string())));
+                    }
+                }
+            }
+        }
     }
+
+    Ok(None)
 }
 
-fn get_cached_binary(home_dir: Option<&mut PathBuf>, bin_name: &str) -> Result<Option<Vec<u8>>> {
-    match find_cached_binary(home_dir, bin_name)? {
-        Some(path) => {
+fn get_cached_binary(
+    home_dir: Option<&mut PathBuf>,
+    version: &str,
+    args: &Args,
+) -> Result<Option<Vec<u8>>> {
+    let version = VersionReq::parse(version).with_context(|| "failed to parse {version}")?;
+    match find_cached_binary(args, home_dir, &version)? {
+        Some((path, _)) => {
             debug!("Using cached binary at {path:?}");
             let buffer = fs::read(&path)
                 .with_context(|| format!("failed to read cached binary at {path:?}"))?;
@@ -668,11 +712,13 @@ fn create_output_file(program_path: &Path) -> Result<File> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::env;
+
     use html_to_string_macro::html;
     use once_cell::sync::Lazy;
-    use std::env;
     use tempdir::TempDir;
+
+    use super::*;
 
     static LINES: Lazy<String> = Lazy::new(|| {
         html!(
@@ -906,9 +952,9 @@ version = "test_load_config_file_in_home""#;
             "0.15.0-beta1",
             "0.15.0-alpha20210107",
         ]
-        .into_iter()
-        .map(|v| ReleaseInfo::new(ProgramName::Terraform, v.into()))
-        .collect();
+            .into_iter()
+            .map(|v| ReleaseInfo::new(ProgramName::Terraform, v.into()))
+            .collect();
         let args = Args {
             list_all: true,
             ..Default::default()
@@ -923,6 +969,7 @@ version = "test_load_config_file_in_home""#;
     #[test]
     fn test_get_version_from_module() -> Result<()> {
         const EXPECTED_VERSION: &str = "~>1.0.0";
+        let expected_req = VersionReq::parse(EXPECTED_VERSION)?;
 
         let tmp_dir = TempDir::new("test_get_version_from_module")?;
         let tmp_dir_path = tmp_dir.path();
@@ -933,7 +980,7 @@ version = "test_load_config_file_in_home""#;
         )?;
 
         let actual_version = get_version_from_module(tmp_dir_path)?;
-        assert_eq!(Some(EXPECTED_VERSION), actual_version.as_deref());
+        assert_eq!(Some(expected_req), actual_version);
 
         Ok(())
     }
@@ -941,10 +988,11 @@ version = "test_load_config_file_in_home""#;
     #[test]
     fn test_match_module_version() -> Result<()> {
         const VERSION_CONSTRAINT: &str = "1.0.0";
+        let req = VersionReq::parse(VERSION_CONSTRAINT)?;
         let expected_release = ReleaseInfo::new(ProgramName::Terraform, VERSION_CONSTRAINT.into());
         let versions = vec![expected_release.clone()];
 
-        let actual_release = match_module_version(VERSION_CONSTRAINT, &versions)?;
+        let actual_release = match_module_version(&req, &versions)?;
         assert_eq!(Some(expected_release), actual_release);
 
         Ok(())
