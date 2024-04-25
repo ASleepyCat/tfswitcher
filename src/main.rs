@@ -496,8 +496,9 @@ async fn install_version(
         .with_context(|| "failed to copy binary")?;
 
     info!(
-        "Installed {:?} to {program_path:?}",
-        args.get_program_name()
+        "Installed {:?} {} to {program_path:?}",
+        args.get_program_name(),
+        release.version
     );
     Ok(())
 }
