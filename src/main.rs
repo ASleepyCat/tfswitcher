@@ -4,7 +4,7 @@ use core::fmt;
 use dialoguer::{theme::ColorfulTheme, Select};
 use env_logger::TimestampPrecision;
 use futures_util::stream::StreamExt;
-use indicatif::{MultiProgress, ProgressBar};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget};
 use indicatif_log_bridge::LogWrapper;
 use log::{debug, info, LevelFilter};
 use regex::Regex;
@@ -51,6 +51,11 @@ struct Args {
     #[arg(short = 'F', long)]
     #[serde(default)]
     force_remove: bool,
+
+    /// Suppress logs
+    #[arg(short, long)]
+    #[serde(default)]
+    silent: bool,
 
     /// Enable verbose logs
     #[arg(short, long)]
@@ -285,7 +290,9 @@ async fn main() -> Result<()> {
 }
 
 fn init_logger(args: &Args) -> Result<MultiProgress> {
-    let (ts_precision, level_filter) = if args.verbose {
+    let (ts_precision, level_filter) = if args.silent {
+        (None, LevelFilter::Off)
+    } else if args.verbose {
         (Some(TimestampPrecision::default()), LevelFilter::Debug)
     } else {
         (None, LevelFilter::Info)
@@ -297,7 +304,12 @@ fn init_logger(args: &Args) -> Result<MultiProgress> {
         .format_timestamp(ts_precision)
         .filter_level(level_filter)
         .build();
-    let multi = MultiProgress::new();
+    let draw_target = if args.silent {
+        ProgressDrawTarget::hidden()
+    } else {
+        ProgressDrawTarget::stderr()
+    };
+    let multi = MultiProgress::with_draw_target(draw_target);
     LogWrapper::new(multi.clone(), logger).try_init()?;
 
     Ok(multi)
@@ -311,6 +323,8 @@ fn parse_config_arguments(cwd: PathBuf, args: &mut Args) -> Result<()> {
         args.list_all |= config.list_all;
         args.opentofu |= config.opentofu;
         args.force_remove |= config.force_remove;
+        args.silent |= config.silent;
+        args.verbose |= config.verbose;
         if args.install_version.is_none() {
             args.install_version = config.install_version
         }
@@ -400,7 +414,7 @@ async fn get_version_to_install(args: &Args) -> Result<Option<ReleaseInfo>> {
         }
     }
 
-    get_version_from_user_prompt(args.get_program_name(), &versions)
+    get_version_from_user_prompt(args, &versions)
 }
 
 fn get_version_from_module(cwd: &Path) -> Result<Option<VersionReq>> {
@@ -433,17 +447,22 @@ fn match_module_version(
 }
 
 fn get_version_from_user_prompt(
-    program_name: ProgramName,
+    args: &Args,
     versions: &Vec<ReleaseInfo>,
 ) -> Result<Option<ReleaseInfo>> {
-    let prompt = match program_name {
-        ProgramName::Terraform => format!("Select a {program_name:?} version to install"),
-        ProgramName::OpenTofu => format!("Select an {program_name:?} version to install"),
+    let prompt = match args.get_program_name() {
+        ProgramName::Terraform => {
+            format!("Select a {:?} version to install", ProgramName::Terraform)
+        }
+        ProgramName::OpenTofu => {
+            format!("Select an {:?} version to install", ProgramName::OpenTofu)
+        }
     };
     match Select::with_theme(&ColorfulTheme::default())
         .with_prompt(prompt)
         .items(&versions.get_versions())
         .default(0)
+        .report(!args.silent)
         .interact_opt()
         .with_context(|| "failed to get version from user prompt")?
     {
@@ -854,6 +873,7 @@ opentofu = true"#;
             list_all: true,
             opentofu: true,
             force_remove: true,
+            silent: true,
             verbose: true,
             install_version: Some("test_load_config_file_in_cwd".to_owned()),
             generator: None,
@@ -862,6 +882,7 @@ opentofu = true"#;
 list_all = true
 opentofu = true
 force_remove = true
+silent = true
 verbose = true
 version = "test_load_config_file_in_cwd""#;
 
@@ -883,6 +904,7 @@ version = "test_load_config_file_in_cwd""#;
             list_all: true,
             opentofu: true,
             force_remove: true,
+            silent: true,
             verbose: true,
             install_version: Some("test_load_config_file_in_home".to_owned()),
             generator: None,
@@ -891,6 +913,7 @@ version = "test_load_config_file_in_cwd""#;
 list_all = true
 opentofu = true
 force_remove = true
+silent = true
 verbose = true
 version = "test_load_config_file_in_home""#;
 
@@ -952,9 +975,9 @@ version = "test_load_config_file_in_home""#;
             "0.15.0-beta1",
             "0.15.0-alpha20210107",
         ]
-            .into_iter()
-            .map(|v| ReleaseInfo::new(ProgramName::Terraform, v.into()))
-            .collect();
+        .into_iter()
+        .map(|v| ReleaseInfo::new(ProgramName::Terraform, v.into()))
+        .collect();
         let args = Args {
             list_all: true,
             ..Default::default()
