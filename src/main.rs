@@ -31,7 +31,7 @@ const DEFAULT_CACHE_LOCATION: &str = ".cache/tfswitcher";
 #[derive(Parser, Default, Debug, Serialize, Deserialize, PartialEq)]
 #[command(version, about)]
 struct Args {
-    /// Location of terraform binary
+    /// Location of terraform/tofu binary
     #[arg(short, long = "bin")]
     #[serde(rename = "bin")]
     binary_location: Option<PathBuf>,
@@ -78,6 +78,7 @@ enum ProgramName {
     OpenTofu,
 }
 
+#[cfg(unix)]
 impl ProgramName {
     fn eq(&self, other: &str) -> bool {
         match self {
@@ -87,11 +88,32 @@ impl ProgramName {
     }
 }
 
+#[cfg(unix)]
 impl fmt::Display for ProgramName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ProgramName::Terraform => write!(f, "terraform"),
             ProgramName::OpenTofu => write!(f, "tofu"),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl ProgramName {
+    fn eq(&self, other: &str) -> bool {
+        match self {
+            ProgramName::Terraform => other == "terraform.exe",
+            ProgramName::OpenTofu => other == "tofu.exe",
+        }
+    }
+}
+
+#[cfg(windows)]
+impl fmt::Display for ProgramName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProgramName::Terraform => write!(f, "terraform.exe"),
+            ProgramName::OpenTofu => write!(f, "tofu.exe"),
         }
     }
 }
@@ -126,9 +148,16 @@ impl ReleaseInfo {
         }
     }
 
+    #[cfg(unix)]
     fn get_binary_name(&self) -> String {
         let target = get_target_platform();
         format!("{}_{}_{target}", self.program_name, self.version)
+    }
+
+    #[cfg(windows)]
+    fn get_binary_name(&self) -> String {
+        let target = get_target_platform();
+        format!("{}_{}_{target}.exe", self.program_name, self.version)
     }
 
     fn get_zip_name(&self) -> String {
@@ -377,7 +406,7 @@ fn find_terraform_program_path(args: &Args) -> Option<PathBuf> {
 
     match home::home_dir() {
         Some(mut path) => {
-            path.push(format!("{DEFAULT_LOCATION}/{program_name}"));
+            path = path.join(DEFAULT_LOCATION).join(program_name.to_string());
             info!(
                 "Could not locate {program_name:?}, installing to {path:?}. Make sure to include the directory in your $PATH environment variable"
             );
@@ -532,21 +561,21 @@ fn find_cached_binary(
             let file_name = file.file_name();
             if let Some(bin_version) = file_name.to_str() {
                 let mut split = bin_version.split("_");
-                let bin = match split.nth(0) {
+                let bin = match split.next() {
                     Some(b) => b,
                     None => continue,
                 };
-                let version_split = match split.nth(0) {
+                let version_split = match split.next() {
                     Some(v) => v,
                     None => continue,
                 };
-                if args.get_program_name().eq(bin) {
-                    if version.matches(
+                if args.get_program_name().eq(bin)
+                    && version.matches(
                         &Version::from_str(version_split)
                             .with_context(|| format!("failed to parse {version_split}"))?,
-                    ) {
-                        return Ok(Some((file.path(), version_split.to_string())));
-                    }
+                    )
+                {
+                    return Ok(Some((file.path(), version_split.to_string())));
                 }
             }
         }
