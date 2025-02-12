@@ -14,19 +14,28 @@ use serde::{Deserialize, Serialize};
 use std::{
     cmp,
     env::consts,
-    fs::{self, File, OpenOptions},
     io::{self, Cursor, Read, Write},
     path::{Path, PathBuf},
     str::FromStr,
     vec,
 };
+#[cfg(unix)]
+use std::fs::{self, File, OpenOptions};
+#[cfg(windows)]
+use std::fs::{self, File};
 use zip::ZipArchive;
 
 const TERRAFORM_ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
 const OPENTOFU_ARCHIVE_URL: &str = "https://github.com/opentofu/opentofu/releases/download";
 const CONFIG_FILE_NAME: &str = ".tfswitch.toml";
+#[cfg(unix)]
 const DEFAULT_LOCATION: &str = ".local/bin";
+#[cfg(unix)]
 const DEFAULT_CACHE_LOCATION: &str = ".cache/tfswitcher";
+#[cfg(windows)]
+const DEFAULT_LOCATION: &str = ".local\\bin";
+#[cfg(windows)]
+const DEFAULT_CACHE_LOCATION: &str = ".cache\\tfswitcher";
 
 #[derive(Parser, Default, Debug, Serialize, Deserialize, PartialEq)]
 #[command(version, about)]
@@ -162,7 +171,10 @@ impl ReleaseInfo {
 
     fn get_zip_name(&self) -> String {
         let target = get_target_platform();
-        format!("{}_{}_{target}.zip", self.program_name, self.version)
+        match self.program_name {
+            ProgramName::Terraform => format!("terraform_{}_{target}.zip", self.version),
+            ProgramName::OpenTofu => format!("tofu_{}_{target}.zip", self.version),
+        }
     }
 
     fn get_download_url(&self) -> String {
@@ -408,7 +420,7 @@ fn find_terraform_program_path(args: &Args) -> Option<PathBuf> {
         Some(mut path) => {
             path = path.join(DEFAULT_LOCATION).join(program_name.to_string());
             info!(
-                "Could not locate {program_name:?}, installing to {path:?}. Make sure to include the directory in your $PATH environment variable"
+                "Could not locate {program_name}, installing to {path:?}. Make sure to include the directory in your $PATH environment variable"
             );
             Some(path)
         }
@@ -480,12 +492,8 @@ fn get_version_from_user_prompt(
     versions: &Vec<ReleaseInfo>,
 ) -> Result<Option<ReleaseInfo>> {
     let prompt = match args.get_program_name() {
-        ProgramName::Terraform => {
-            format!("Select a {:?} version to install", ProgramName::Terraform)
-        }
-        ProgramName::OpenTofu => {
-            format!("Select an {:?} version to install", ProgramName::OpenTofu)
-        }
+        ProgramName::Terraform => "Select a Terraform version to install",
+        ProgramName::OpenTofu => "Select an OpenTofu version to install"
     };
     match Select::with_theme(&ColorfulTheme::default())
         .with_prompt(prompt)
@@ -507,7 +515,7 @@ async fn install_version(
     release: ReleaseInfo,
 ) -> Result<()> {
     debug!(
-        "{:?} {} will be installed to {program_path:?}",
+        "{} {} will be installed to {program_path:?}",
         args.get_program_name(),
         release.version
     );
@@ -608,7 +616,8 @@ async fn download_and_cache_bin(multi: MultiProgress, release: &ReleaseInfo) -> 
         let archive = ZipArchive::new(cursor).with_context(|| "failed to read cached archive")?;
         binary = extract_zip_archive(&release.program_name, archive)?;
     } else {
-        binary = download_bin(multi, release).await?;
+        let archive = download_zip(multi, release).await?;
+        binary = extract_zip_archive(&release.program_name, archive)?;
     }
 
     cache_binary(
@@ -643,11 +652,6 @@ fn get_cached_zip(
         }
         None => Ok(None),
     }
-}
-
-async fn download_bin(multi: MultiProgress, release: &ReleaseInfo) -> Result<Vec<u8>> {
-    let archive = download_zip(multi, release).await?;
-    Ok(extract_zip_archive(&release.program_name, archive)?)
 }
 
 async fn download_zip(
@@ -692,7 +696,7 @@ fn extract_zip_archive(
 ) -> Result<Vec<u8>> {
     let mut file = archive
         .by_name(&program_name.to_string())
-        .with_context(|| "could not get item in archive")?;
+        .with_context(|| format!("could not find {} in archive", program_name))?;
 
     let mut buf = vec![];
     file.read_to_end(&mut buf)
