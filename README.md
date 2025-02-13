@@ -60,7 +60,7 @@ echo "source <(tfswitcher -c bash)" >> ~/.bashrc
 
 ## Caveats
 
-This has not been tested on Windows or macOS, so YMMV.
+This has not been tested on macOS, so YMMV.
 
 ## Where's `v0.1.0`?
 
