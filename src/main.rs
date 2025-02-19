@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Ok, Result};
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, Parser, ValueEnum};
 use core::fmt;
 use dialoguer::{theme::ColorfulTheme, Select};
 use env_logger::TimestampPrecision;
@@ -32,6 +32,16 @@ const CONFIG_FILE_NAME: &str = ".tfswitch.toml";
 const DEFAULT_CACHE_LOCATION: &str = ".cache/tfswitcher";
 #[cfg(windows)]
 const DEFAULT_CACHE_LOCATION: &str = ".cache\\tfswitcher";
+
+#[derive(Parser, Clone, Debug, PartialEq, Serialize, Deserialize, ValueEnum)]
+pub enum Shell {
+    Bash,
+    Elvish,
+    Fish,
+    Powershell,
+    Zsh,
+    Nushell,
+}
 
 #[derive(Parser, Default, Debug, Serialize, Deserialize, PartialEq)]
 #[command(version, about)]
@@ -74,7 +84,7 @@ struct Args {
     /// Generate tab-completion scripts for the specified shell
     #[arg(short = 'c', long = "completions", id = "SHELL")]
     #[serde(skip)]
-    generator: Option<clap_complete::Shell>,
+    generator: Option<Shell>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -289,6 +299,32 @@ async fn get_http(url: &str) -> Result<Response> {
     Ok(response)
 }
 
+fn generate_completions(generator: Shell) {
+    let shell = match generator {
+        Shell::Bash => clap_complete::Shell::Bash,
+        Shell::Elvish => clap_complete::Shell::Elvish,
+        Shell::Fish => clap_complete::Shell::Fish,
+        Shell::Powershell => clap_complete::Shell::PowerShell,
+        Shell::Zsh => clap_complete::Shell::Zsh,
+        Shell::Nushell => {
+            clap_complete::generate(
+                clap_complete_nushell::Nushell,
+                &mut Args::command_for_update(),
+                clap::crate_name!(),
+                &mut io::stdout(),
+            );
+            return;
+        }
+    };
+
+    clap_complete::generate(
+        shell,
+        &mut Args::command_for_update(),
+        clap::crate_name!(),
+        &mut io::stdout(),
+    )
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut args = Args::parse();
@@ -296,12 +332,7 @@ async fn main() -> Result<()> {
     let multi = init_logger(&args)?;
 
     if let Some(generator) = args.generator {
-        clap_complete::generate(
-            generator,
-            &mut Args::command_for_update(),
-            clap::crate_name!(),
-            &mut io::stdout(),
-        );
+        generate_completions(generator);
         return Ok(());
     }
 
