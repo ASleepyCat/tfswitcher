@@ -11,10 +11,13 @@ use regex::Regex;
 use reqwest::Response;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
+use std::fs::{self, File};
+#[cfg(unix)]
+use std::fs::{self, File, OpenOptions};
 use std::{
     cmp,
     env::consts,
-    fs::{self, File, OpenOptions},
     io::{self, Cursor, Read, Write},
     path::{Path, PathBuf},
     str::FromStr,
@@ -25,13 +28,15 @@ use zip::ZipArchive;
 const TERRAFORM_ARCHIVE_URL: &str = "https://releases.hashicorp.com/terraform";
 const OPENTOFU_ARCHIVE_URL: &str = "https://github.com/opentofu/opentofu/releases/download";
 const CONFIG_FILE_NAME: &str = ".tfswitch.toml";
-const DEFAULT_LOCATION: &str = ".local/bin";
+#[cfg(unix)]
 const DEFAULT_CACHE_LOCATION: &str = ".cache/tfswitcher";
+#[cfg(windows)]
+const DEFAULT_CACHE_LOCATION: &str = ".cache\\tfswitcher";
 
 #[derive(Parser, Default, Debug, Serialize, Deserialize, PartialEq)]
 #[command(version, about)]
 struct Args {
-    /// Location of terraform binary
+    /// Location of terraform/tofu binary
     #[arg(short, long = "bin")]
     #[serde(rename = "bin")]
     binary_location: Option<PathBuf>,
@@ -87,11 +92,22 @@ impl ProgramName {
     }
 }
 
+#[cfg(unix)]
 impl fmt::Display for ProgramName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ProgramName::Terraform => write!(f, "terraform"),
             ProgramName::OpenTofu => write!(f, "tofu"),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl fmt::Display for ProgramName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProgramName::Terraform => write!(f, "terraform.exe"),
+            ProgramName::OpenTofu => write!(f, "tofu.exe"),
         }
     }
 }
@@ -126,14 +142,27 @@ impl ReleaseInfo {
         }
     }
 
+    #[cfg(unix)]
     fn get_binary_name(&self) -> String {
         let target = get_target_platform();
         format!("{}_{}_{target}", self.program_name, self.version)
     }
 
+    #[cfg(windows)]
+    fn get_binary_name(&self) -> String {
+        let target = get_target_platform();
+        match self.program_name {
+            ProgramName::Terraform => format!("terraform_{}_{target}.exe", self.version),
+            ProgramName::OpenTofu => format!("tofu_{}_{target}.exe", self.version),
+        }
+    }
+
     fn get_zip_name(&self) -> String {
         let target = get_target_platform();
-        format!("{}_{}_{target}.zip", self.program_name, self.version)
+        match self.program_name {
+            ProgramName::Terraform => format!("terraform_{}_{target}.zip", self.version),
+            ProgramName::OpenTofu => format!("tofu_{}_{target}.zip", self.version),
+        }
     }
 
     fn get_download_url(&self) -> String {
@@ -341,9 +370,9 @@ fn load_config_file(mut cwd: PathBuf, mut home_dir: Option<PathBuf>) -> Result<O
     cwd.push(CONFIG_FILE_NAME);
     if cwd.exists() {
         let config = fs::read_to_string(&cwd)
-            .with_context(|| format!("failed to read config file in cwd at {:?}", cwd))?;
+            .with_context(|| format!("failed to read config file in cwd at {}", cwd.display()))?;
         let toml_file = toml::from_str(&config)
-            .with_context(|| format!("failed to parse config in cwd at {cwd:?}"))?;
+            .with_context(|| format!("failed to parse config in cwd at {}", cwd.display()))?;
         return Ok(Some(toml_file));
     }
 
@@ -354,10 +383,11 @@ fn load_config_file(mut cwd: PathBuf, mut home_dir: Option<PathBuf>) -> Result<O
                 return Ok(None);
             }
 
-            let config = fs::read_to_string(&home)
-                .with_context(|| format!("failed to read config file in home at {home:?}"))?;
+            let config = fs::read_to_string(&home).with_context(|| {
+                format!("failed to read config file in home at {}", home.display())
+            })?;
             let toml_file = toml::from_str(&config)
-                .with_context(|| format!("failed to parse config in home at {home:?}"))?;
+                .with_context(|| format!("failed to parse config in home at {}", home.display()))?;
             Ok(Some(toml_file))
         }
         None => Ok(None),
@@ -377,9 +407,12 @@ fn find_terraform_program_path(args: &Args) -> Option<PathBuf> {
 
     match home::home_dir() {
         Some(mut path) => {
-            path.push(format!("{DEFAULT_LOCATION}/{program_name}"));
+            path = path
+                .join(".local")
+                .join("bin")
+                .join(program_name.to_string());
             info!(
-                "Could not locate {program_name:?}, installing to {path:?}. Make sure to include the directory in your $PATH environment variable"
+                "Could not locate {program_name}, installing to {}. Make sure to include the directory in your $PATH environment variable", path.display()
             );
             Some(path)
         }
@@ -451,12 +484,8 @@ fn get_version_from_user_prompt(
     versions: &Vec<ReleaseInfo>,
 ) -> Result<Option<ReleaseInfo>> {
     let prompt = match args.get_program_name() {
-        ProgramName::Terraform => {
-            format!("Select a {:?} version to install", ProgramName::Terraform)
-        }
-        ProgramName::OpenTofu => {
-            format!("Select an {:?} version to install", ProgramName::OpenTofu)
-        }
+        ProgramName::Terraform => "Select a Terraform version to install",
+        ProgramName::OpenTofu => "Select an OpenTofu version to install",
     };
     match Select::with_theme(&ColorfulTheme::default())
         .with_prompt(prompt)
@@ -478,9 +507,10 @@ async fn install_version(
     release: ReleaseInfo,
 ) -> Result<()> {
     debug!(
-        "{:?} {} will be installed to {program_path:?}",
+        "{} {} will be installed to {}",
         args.get_program_name(),
-        release.version
+        release.version,
+        program_path.display()
     );
 
     let binary = get_binary(args, multi, &release).await?;
@@ -488,7 +518,7 @@ async fn install_version(
 
     // Create a new file for the extracted file
     let mut outfile = create_output_file(program_path)?;
-    debug!("Copying binary to {program_path:?}");
+    debug!("Copying binary to {}", program_path.display());
 
     // Write the contents of the file to the output file
     outfile
@@ -496,9 +526,10 @@ async fn install_version(
         .with_context(|| "failed to copy binary")?;
 
     info!(
-        "Installed {:?} {} to {program_path:?}",
+        "Installed {:?} {} to {}",
         args.get_program_name(),
-        release.version
+        release.version,
+        program_path.display()
     );
     Ok(())
 }
@@ -517,7 +548,7 @@ fn find_cached_binary(
     version: &VersionReq,
 ) -> Result<Option<(PathBuf, String)>> {
     if let Some(path) = home_dir {
-        path.push(DEFAULT_CACHE_LOCATION);
+        path.push(Path::new(DEFAULT_CACHE_LOCATION));
         if !path.exists() {
             return Ok(None);
         }
@@ -532,21 +563,21 @@ fn find_cached_binary(
             let file_name = file.file_name();
             if let Some(bin_version) = file_name.to_str() {
                 let mut split = bin_version.split("_");
-                let bin = match split.nth(0) {
+                let bin = match split.next() {
                     Some(b) => b,
                     None => continue,
                 };
-                let version_split = match split.nth(0) {
+                let version_split = match split.next() {
                     Some(v) => v,
                     None => continue,
                 };
-                if args.get_program_name().eq(bin) {
-                    if version.matches(
+                if args.get_program_name().eq(bin)
+                    && version.matches(
                         &Version::from_str(version_split)
                             .with_context(|| format!("failed to parse {version_split}"))?,
-                    ) {
-                        return Ok(Some((file.path(), version_split.to_string())));
-                    }
+                    )
+                {
+                    return Ok(Some((file.path(), version_split.to_string())));
                 }
             }
         }
@@ -560,12 +591,13 @@ fn get_cached_binary(
     version: &str,
     args: &Args,
 ) -> Result<Option<Vec<u8>>> {
-    let version = VersionReq::parse(version).with_context(|| "failed to parse {version}")?;
+    let version =
+        VersionReq::parse(version).with_context(|| format!("failed to parse {version}"))?;
     match find_cached_binary(args, home_dir, &version)? {
         Some((path, _)) => {
-            debug!("Using cached binary at {path:?}");
+            debug!("Using cached binary at {}", path.display());
             let buffer = fs::read(&path)
-                .with_context(|| format!("failed to read cached binary at {path:?}"))?;
+                .with_context(|| format!("failed to read cached binary at {}", path.display()))?;
 
             Ok(Some(buffer))
         }
@@ -574,13 +606,13 @@ fn get_cached_binary(
 }
 
 async fn download_and_cache_bin(multi: MultiProgress, release: &ReleaseInfo) -> Result<Vec<u8>> {
-    let binary: Vec<u8>;
+    let archive: ZipArchive<Cursor<Vec<u8>>>;
     if let Some(cursor) = get_cached_zip(home::home_dir().as_mut(), &release.get_zip_name())? {
-        let archive = ZipArchive::new(cursor).with_context(|| "failed to read cached archive")?;
-        binary = extract_zip_archive(&release.program_name, archive)?;
+        archive = ZipArchive::new(cursor).with_context(|| "failed to read cached archive")?;
     } else {
-        binary = download_bin(multi, release).await?;
+        archive = download_zip(multi, release).await?;
     }
+    let binary = extract_zip_archive(&release.program_name, archive)?;
 
     cache_binary(
         home::home_dir().as_mut(),
@@ -597,28 +629,25 @@ fn get_cached_zip(
     zip_name: &str,
 ) -> Result<Option<Cursor<Vec<u8>>>> {
     match home_dir {
-        Some(path) => {
-            path.push(format!("{DEFAULT_CACHE_LOCATION}/{zip_name}"));
+        Some(mut path) => {
+            let tmp_path = &mut path.join(DEFAULT_CACHE_LOCATION).join(zip_name);
+            path = tmp_path;
             if !path.exists() {
                 return Ok(None);
             }
 
-            debug!("Using cached archive at {path:?}");
+            debug!("Using cached archive at {}", path.display());
             let buffer = fs::read(&path)
-                .with_context(|| format!("failed to read cached archive at {path:?}"))?;
-            fs::remove_file(&path)
-                .with_context(|| "could not clean up cached archive at {path:?}")?;
+                .with_context(|| format!("failed to read cached archive at {}", path.display()))?;
+            fs::remove_file(&path).with_context(|| {
+                format!("could not clean up cached archive at {}", path.display())
+            })?;
             let cursor = Cursor::new(buffer);
 
             Ok(Some(cursor))
         }
         None => Ok(None),
     }
-}
-
-async fn download_bin(multi: MultiProgress, release: &ReleaseInfo) -> Result<Vec<u8>> {
-    let archive = download_zip(multi, release).await?;
-    Ok(extract_zip_archive(&release.program_name, archive)?)
 }
 
 async fn download_zip(
@@ -663,7 +692,7 @@ fn extract_zip_archive(
 ) -> Result<Vec<u8>> {
     let mut file = archive
         .by_name(&program_name.to_string())
-        .with_context(|| "could not get item in archive")?;
+        .with_context(|| format!("could not find {} in archive", program_name))?;
 
     let mut buf = vec![];
     file.read_to_end(&mut buf)
@@ -676,10 +705,11 @@ fn cache_binary(cache_location: Option<&mut PathBuf>, bin_name: &str, buffer: &[
     match cache_location {
         Some(path) => {
             path.push(DEFAULT_CACHE_LOCATION);
-            debug!("Caching binary to {path:?}");
-            fs::create_dir_all(&path)
-                .with_context(|| format!("failed to create cache directory at {path:?}"))?;
+            fs::create_dir_all(&path).with_context(|| {
+                format!("failed to create cache directory at {}", path.display())
+            })?;
             path.push(bin_name);
+            debug!("Caching binary to {}", path.display());
             fs::write(path, buffer).with_context(|| "failed to cache binary")?;
         }
         None => debug!("Unable to cache binary: could not find cache directory"),
@@ -693,7 +723,7 @@ fn remove_file(args: &Args, program_path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    debug!("Removing binary at {program_path:?}");
+    debug!("Removing binary at {}", program_path.display());
     fs::remove_file(program_path)?;
 
     Ok(())
@@ -705,7 +735,10 @@ fn create_output_file(program_path: &Path) -> Result<File> {
 
     if let Some(parent) = program_path.parent() {
         fs::create_dir_all(parent).with_context(|| {
-            format!("failed to create missing parent directories to {program_path:?}")
+            format!(
+                "failed to create missing parent directories to {}",
+                program_path.display()
+            )
         })?;
     }
 
@@ -716,7 +749,7 @@ fn create_output_file(program_path: &Path) -> Result<File> {
         .create(true)
         .mode(0o777)
         .open(program_path)
-        .with_context(|| format!("failed to create file at {program_path:?}"))?;
+        .with_context(|| format!("failed to create file at {}", program_path.display()))?;
 
     Ok(file)
 }
@@ -727,7 +760,7 @@ fn create_output_file(program_path: &Path) -> Result<File> {
         fs::create_dir_all(parent)?;
     }
     Ok(File::create(program_path)
-        .with_context(|| format!("failed to create file at {program_path:?}"))?)
+        .with_context(|| format!("failed to create file at {}", program_path.display()))?)
 }
 
 #[cfg(test)]
